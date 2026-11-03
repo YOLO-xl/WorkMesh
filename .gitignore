@@ -1,0 +1,19 @@
+.venv/
+__pycache__/
+*.py[cod]
+.env
+.DS_Store
+.pytest_cache/
+data/*.db
+
+# SQLite runtime files
+data/*.db-wal
+data/*.db-shm
+
+# Test and coverage
+.coverage
+htmlcov/
+
+# IDE
+.idea/
+.vscode/
