@@ -16,6 +16,41 @@
 
 ## [Unreleased]
 
+### Added
+
+- 建立统一 BaseConnector 连接器接口。
+- 建立 ConnectorRegistry 连接器注册中心。
+- 增加 Elasticsearch 日志连接器初版。
+- 支持 Elasticsearch 连接测试、日志查询和统一 Evidence 格式标准化。
+- 增加连接状态管理和异常处理。
+- 增加 pytest 自动化测试配置。
+- 新增 Elasticsearch 连接器自动化测试。
+
+### Architecture
+
+- 确立预置连接器与通用 API 扩展相结合的系统集成策略。
+- 规划 Integration Hub，统一管理企业系统连接器。
+- 明确日志、指标、链路追踪等多源证据的统一接入方向。
+
+### Testing
+
+- Elasticsearch 连接器测试：6 passed。
+- 全项目测试：13 passed。
+
+### Git
+
+- Commit: `358ff6c`
+- Message: `feat: add Elasticsearch log connector`
+
+### Planned
+
+- 真实 Elasticsearch 服务连接验证。
+- Prometheus 指标连接器。
+- OpenSearch、Loki 日志连接器。
+- Jaeger / Tempo 链路追踪连接器。
+- Integration Hub 管理界面。
+- 多源证据关联与 AI 辅助诊断。
+
 ### Architecture
 - 增加整体系统架构设计文档。
 - 增加性能与扩展设计文档。
