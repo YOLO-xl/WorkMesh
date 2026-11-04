@@ -10,6 +10,47 @@ from services.data_import_service import (
     REQUIRED_FIELDS,
 )
 
+from database.migration import initialize_database
+from database.feedback_repository import FeedbackRepository
+
+
+# 初始化数据库并创建 Repository
+initialize_database()
+feedback_repository = FeedbackRepository()
+
+
+def build_import_records(raw_df, standard_df, mapping):
+    """将标准化数据转换为 Repository 可写入的记录。"""
+    records = []
+
+    mapped_columns = {
+        column for column in mapping.values()
+        if column is not None
+    }
+
+    for position in range(len(standard_df)):
+        standard_row = standard_df.iloc[position]
+        raw_row = raw_df.iloc[position]
+
+        record = standard_row.to_dict()
+
+        # 反馈来源属于反馈记录字段，不是文件连接器类型。
+        record["source_type"] = record.get("source")
+
+        # 保留原始行，便于后续追溯。
+        record["raw_payload"] = raw_row.to_dict()
+
+        # 保留未映射的原始字段。
+        record["extra_data"] = {
+            str(column): raw_row[column]
+            for column in raw_df.columns
+            if column not in mapped_columns
+        }
+
+        records.append(record)
+
+    return records
+
 st.set_page_config(
     page_title="WorkMesh | Enterprise AI Workspace",
     page_icon="🔗",
@@ -110,6 +151,26 @@ elif page == "数据接入":
     )
 
     if uploaded_file is not None:
+        import hashlib
+
+        current_file_hash = hashlib.sha256(
+            uploaded_file.getvalue()
+        ).hexdigest()
+
+        preview_hash = st.session_state.get("import_file_hash")
+
+        if preview_hash and preview_hash != current_file_hash:
+            for key in (
+                "import_preview",
+                "import_validation",
+                "import_filename",
+                "import_raw_df",
+                "import_mapping",
+                "import_file_hash",
+                "last_import_result",
+            ):
+                st.session_state.pop(key, None)
+
         try:
             raw_df = read_uploaded_file(uploaded_file)
 
@@ -164,6 +225,11 @@ elif page == "数据接入":
                     st.session_state["import_preview"] = standard_df
                     st.session_state["import_validation"] = validation
                     st.session_state["import_filename"] = uploaded_file.name
+                    st.session_state["import_raw_df"] = raw_df.copy()
+                    st.session_state["import_mapping"] = mapping.copy()
+                    st.session_state["import_file_hash"] = __import__(
+                        "hashlib"
+                    ).sha256(uploaded_file.getvalue()).hexdigest()
 
                 if "import_preview" in st.session_state:
                     standard_df = st.session_state["import_preview"]
@@ -198,9 +264,158 @@ elif page == "数据接入":
                         mime="text/csv",
                     )
 
-                    st.info(
-                        "当前版本仅支持预览和下载，尚未写入 SQLite 数据库。"
+                    st.divider()
+                    st.subheader("导入数据库")
+
+                    can_import = (
+                        not validation["issues"]
+                        and validation["valid_count"] > 0
                     )
+
+                    if validation["issues"]:
+                        for issue in validation["issues"]:
+                            st.error(issue)
+
+                    if validation["row_issues"]:
+                        st.warning(
+                            f"有 {len(validation['row_issues'])} 条记录存在质量问题，"
+                            "导入时将跳过这些记录。"
+                        )
+                        st.dataframe(
+                            pd.DataFrame(validation["row_issues"]),
+                            use_container_width=True,
+                        )
+
+                    st.caption(
+                        f"预计有效记录：{validation['valid_count']} 条"
+                    )
+
+                    if not can_import:
+                        st.warning("当前数据不满足导入条件，暂时不能导入。")
+
+                    if st.button(
+                        "确认导入数据库",
+                        type="primary",
+                        disabled=not can_import,
+                        key="confirm_database_import",
+                    ):
+                        try:
+                            workspace_id = (
+                                feedback_repository.get_default_workspace()
+                            )
+
+                            source_id = (
+                                feedback_repository.get_or_create_file_source(
+                                    workspace_id=workspace_id,
+                                    source_type="file",
+                                    name="本地文件导入",
+                                )
+                            )
+
+                            file_hash = st.session_state["import_file_hash"]
+                            raw_data = st.session_state["import_raw_df"]
+                            mapping_data = st.session_state["import_mapping"]
+
+                            if feedback_repository.has_imported_file(
+                                source_id,
+                                file_hash,
+                            ):
+                                st.warning(
+                                    "该文件已经导入过。为避免重复写入，本次操作已拦截。"
+                                )
+                            else:
+                                # 根据校验结果筛选有效记录。
+                                invalid_positions = {
+                                    item["row"] - 1
+                                    for item in validation["row_issues"]
+                                }
+                                valid_positions = [
+                                    i for i in range(len(standard_df))
+                                    if i not in invalid_positions
+                                ]
+
+                                valid_standard_df = (
+                                    standard_df.iloc[valid_positions].reset_index(drop=True)
+                                )
+                                valid_raw_df = (
+                                    raw_data.iloc[valid_positions].reset_index(drop=True)
+                                )
+
+                                # 先构造记录，再创建批次，避免转换失败留下 running 批次。
+                                records = build_import_records(
+                                    valid_raw_df,
+                                    valid_standard_df,
+                                    mapping_data,
+                                )
+
+                                batch_id = (
+                                    feedback_repository.create_import_batch(
+                                        workspace_id=workspace_id,
+                                        source_id=source_id,
+                                        file_name=st.session_state["import_filename"],
+                                        file_size=len(uploaded_file.getvalue()),
+                                        file_hash=file_hash,
+                                        total_records=len(records),
+                                    )
+                                )
+
+                                result = (
+                                    feedback_repository.bulk_insert_feedback(
+                                        batch_id=batch_id,
+                                        records=records,
+                                    )
+                                )
+
+                                result["skipped_records"] = len(invalid_positions)
+                                result["original_total_records"] = len(standard_df)
+                                result["file_hash"] = file_hash
+
+                                st.session_state["last_import_result"] = result
+
+                        except Exception as exc:
+                            st.error(f"数据库导入失败：{exc}")
+
+                    result = st.session_state.get("last_import_result")
+
+                    if result and result.get("file_hash") == st.session_state.get(
+                        "import_file_hash"
+                    ):
+                        st.divider()
+                        st.subheader("最近一次导入结果")
+
+                        c1, c2, c3, c4 = st.columns(4)
+                        c1.metric(
+                            "总记录数",
+                            result["original_total_records"],
+                        )
+                        c2.metric(
+                            "成功写入",
+                            result["success_records"],
+                        )
+                        c3.metric(
+                            "写入失败",
+                            result["failed_records"],
+                        )
+                        c4.metric(
+                            "跳过记录",
+                            result["skipped_records"],
+                        )
+
+                        st.caption(
+                            f"批次 ID：{result['batch_id']} | "
+                            f"状态：{result['status']}"
+                        )
+
+                        if result["errors"]:
+                            st.warning("部分记录写入失败：")
+                            st.dataframe(
+                                pd.DataFrame(result["errors"]),
+                                use_container_width=True,
+                            )
+                        elif result["skipped_records"] > 0:
+                            st.success("有效记录已写入，异常记录已跳过。")
+                        else:
+                            st.success("本批数据已全部成功写入 SQLite。")
 
         except Exception as exc:
             st.error(f"文件处理失败：{exc}")

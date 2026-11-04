@@ -239,6 +239,27 @@ class FeedbackRepository:
 
         return batch_id
 
+    def has_imported_file(
+        self,
+        source_id: str,
+        file_hash: str,
+    ) -> bool:
+        """检查同一数据源是否已经导入过该文件。"""
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT 1
+                FROM import_batches
+                WHERE source_id = ?
+                  AND file_hash = ?
+                  AND status IN ('completed', 'partially_failed')
+                LIMIT 1
+                """,
+                (source_id, file_hash),
+            ).fetchone()
+
+        return row is not None
+
     def bulk_insert_feedback(
         self,
         batch_id: str,
@@ -417,8 +438,34 @@ class FeedbackRepository:
                 "errors": errors,
             }
 
-        except Exception:
+        except Exception as exc:
             conn.rollback()
+
+            status_conn = None
+            try:
+                status_conn = self._connect()
+                status_conn.execute(
+                    """
+                    UPDATE import_batches
+                    SET status = 'failed',
+                        error_summary = ?,
+                        completed_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        json_dumps([{"error": str(exc)}]),
+                        utc_now(),
+                        batch_id,
+                    ),
+                )
+                status_conn.commit()
+            except Exception:
+                if status_conn is not None:
+                    status_conn.rollback()
+            finally:
+                if status_conn is not None:
+                    status_conn.close()
+
             raise
 
         finally:
@@ -506,3 +553,73 @@ class FeedbackRepository:
                 )
 
             return result
+
+    def get_feedback_analytics(self, workspace_id: str) -> dict:
+        """获取工作空间的反馈分析统计数据。"""
+        with self._connect() as conn:
+            overview = conn.execute(
+                """
+                SELECT
+                    COUNT(*) AS total_feedback,
+                    COUNT(DISTINCT uid) AS unique_users,
+                    COUNT(DISTINCT product) AS unique_products
+                FROM feedback_records
+                WHERE workspace_id = ?
+                  AND deleted_at IS NULL
+                """,
+                (workspace_id,),
+            ).fetchone()
+
+            daily_trend = conn.execute(
+                """
+                SELECT
+                    date(feedback_time) AS feedback_date,
+                    COUNT(*) AS feedback_count
+                FROM feedback_records
+                WHERE workspace_id = ?
+                  AND deleted_at IS NULL
+                  AND feedback_time IS NOT NULL
+                GROUP BY date(feedback_time)
+                ORDER BY feedback_date ASC
+                """,
+                (workspace_id,),
+            ).fetchall()
+
+            distribution_queries = {
+                "version_distribution": "version",
+                "platform_distribution": "platform",
+                "source_distribution": "source_type",
+                "error_code_distribution": "error_code",
+            }
+
+            distributions = {}
+
+            for key, field in distribution_queries.items():
+                rows = conn.execute(
+                    f"""
+                    SELECT
+                        {field} AS name,
+                        COUNT(*) AS count
+                    FROM feedback_records
+                    WHERE workspace_id = ?
+                      AND deleted_at IS NULL
+                      AND {field} IS NOT NULL
+                      AND TRIM({field}) != ''
+                    GROUP BY {field}
+                    ORDER BY count DESC, name ASC
+                    LIMIT 10
+                    """,
+                    (workspace_id,),
+                ).fetchall()
+
+                distributions[key] = [
+                    dict(row) for row in rows
+                ]
+
+            return {
+                "overview": dict(overview),
+                "daily_trend": [
+                    dict(row) for row in daily_trend
+                ],
+                **distributions,
+            }
