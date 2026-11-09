@@ -1,7 +1,7 @@
 # WorkMesh 开发进度
 
 ## 当前版本
-v0.3.0-dev
+v0.4.0-dev
 
 ## 项目定位
 面向企业多来源信息的 AI 分析工作台。
@@ -24,7 +24,7 @@ v0.3.0-dev
 - [x] 整体架构文档初稿
 - [x] 性能设计文档初稿
 
-## 已完成的证据能力（v0.3.0-dev）
+## 已完成的证据能力（v0.4.0-dev）
 - [x] 统一 Evidence 证据模型（core/evidence.py）
 - [x] 证据关联引擎（core/correlation.py）
 - [x] 证据表与关联表（Schema v2 Migration）
@@ -85,3 +85,5 @@ v0.3.0-dev
 1. 用真实 Elasticsearch 日志验证连接器与关联效果。
 2. 接入 Prometheus 指标连接器，接入链路追踪数据。
 3. 在证据上下文之上接入 AI 诊断，要求结论逐条引用证据。
+
+- 2026-11-09：新增「系统概览」首屏与「问题聚类」（`services/cluster_service.py`、`ui/cluster_page.py`），导航按排查流程重排，测试 87 passed。

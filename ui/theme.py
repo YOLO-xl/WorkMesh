@@ -9,6 +9,7 @@
 """
 
 import streamlit as st
+from html import escape
 
 ACCENT = "#22D3EE"
 ACCENT_ALT = "#6366F1"
@@ -429,6 +430,186 @@ hr {
     font-weight: 600;
     letter-spacing: 0.04em;
 }
+
+/* ---------- 流程步骤条 ---------- */
+.wm-steps {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.55rem;
+    margin: 0.7rem 0 0.2rem;
+}
+
+.wm-step {
+    flex: 1 1 170px;
+    padding: 0.7rem 0.85rem;
+    border-radius: 12px;
+    border: 1px solid rgba(34, 211, 238, 0.12);
+    background: rgba(13, 21, 36, 0.6);
+    font-size: 0.8rem;
+    color: #64748B;
+    transition: all 0.18s ease;
+}
+
+.wm-step-active {
+    border-color: var(--wm-border-strong);
+    background: linear-gradient(140deg, rgba(8, 145, 178, 0.18), rgba(15, 23, 42, 0.7));
+    color: #E2E8F0;
+    box-shadow: 0 0 20px rgba(34, 211, 238, 0.1);
+}
+
+.wm-step-index {
+    color: var(--wm-accent);
+    font-weight: 700;
+    margin-right: 0.35rem;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 深色列表（替代默认表格） ---------- */
+.wm-list {
+    border: 1px solid var(--wm-border);
+    border-radius: 12px;
+    overflow: hidden;
+    background: rgba(13, 21, 36, 0.55);
+}
+
+.wm-list-head {
+    display: grid;
+    gap: 0.9rem;
+    padding: 0.55rem 1rem;
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: #64748B;
+    background: rgba(10, 17, 32, 0.7);
+    border-bottom: 1px solid rgba(34, 211, 238, 0.1);
+}
+
+.wm-list-row {
+    display: grid;
+    gap: 0.9rem;
+    padding: 0.68rem 1rem;
+    font-size: 0.84rem;
+    color: #CBD5E1;
+    border-bottom: 1px solid rgba(34, 211, 238, 0.06);
+    transition: background 0.15s ease;
+    align-items: center;
+}
+
+.wm-list-row:hover {
+    background: rgba(34, 211, 238, 0.05);
+}
+
+.wm-list-row:last-child {
+    border-bottom: none;
+}
+
+.wm-list-row .wm-strong {
+    color: #F1F5F9;
+    font-weight: 600;
+}
+
+.wm-list-row .wm-dim {
+    color: #64748B;
+    font-size: 0.78rem;
+}
+
+.wm-list-empty {
+    padding: 1.6rem 1rem;
+    text-align: center;
+    color: #64748B;
+    font-size: 0.84rem;
+}
+
+/* ---------- 标签 ---------- */
+.wm-tag {
+    display: inline-block;
+    padding: 0.12rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    letter-spacing: 0.05em;
+    border: 1px solid rgba(34, 211, 238, 0.28);
+    background: rgba(34, 211, 238, 0.08);
+    color: #A5F3FC;
+    white-space: nowrap;
+}
+
+.wm-tag-high {
+    border-color: rgba(251, 146, 60, 0.45);
+    background: rgba(251, 146, 60, 0.1);
+    color: #FDBA74;
+}
+
+.wm-tag-medium {
+    border-color: rgba(34, 211, 238, 0.4);
+    background: rgba(34, 211, 238, 0.1);
+    color: #67E8F9;
+}
+
+.wm-tag-low {
+    border-color: rgba(148, 163, 184, 0.28);
+    background: rgba(148, 163, 184, 0.08);
+    color: #94A3B8;
+}
+
+/* ---------- 空状态 ---------- */
+.wm-empty {
+    border: 1px dashed rgba(34, 211, 238, 0.25);
+    border-radius: 14px;
+    padding: 1.8rem 1.2rem;
+    text-align: center;
+    background: rgba(13, 21, 36, 0.45);
+    margin: 0.4rem 0;
+}
+
+.wm-empty-title {
+    color: #E2E8F0;
+    font-size: 0.95rem;
+    margin: 0 0 0.3rem;
+}
+
+.wm-empty-text {
+    color: #64748B;
+    font-size: 0.82rem;
+    margin: 0;
+}
+
+/* ---------- 簇卡片 ---------- */
+.wm-cluster {
+    border: 1px solid var(--wm-border);
+    border-left: 3px solid var(--wm-accent);
+    border-radius: 12px;
+    padding: 0.9rem 1.1rem;
+    background: linear-gradient(150deg, rgba(15, 23, 42, 0.85), rgba(9, 14, 26, 0.62));
+    transition: all 0.18s ease;
+    margin-bottom: 0.55rem;
+}
+
+.wm-cluster:hover {
+    border-color: var(--wm-border-strong);
+    box-shadow: 0 0 22px rgba(34, 211, 238, 0.1);
+}
+
+.wm-cluster-top {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.3rem;
+}
+
+.wm-cluster-title {
+    color: #F1F5F9;
+    font-size: 0.98rem;
+    font-weight: 600;
+    margin: 0;
+}
+
+.wm-cluster-sub {
+    color: #94A3B8;
+    font-size: 0.8rem;
+    margin: 0.15rem 0 0;
+    line-height: 1.55;
+}
 </style>
 """
 
@@ -515,3 +696,84 @@ def status_bar(items: list[tuple[str, str]]) -> None:
         f'<div class="wm-status-bar">{body}</div>',
         unsafe_allow_html=True,
     )
+
+
+def stepper(steps: list[str], active: int = -1) -> None:
+    """流程步骤条；active 为当前步骤下标，-1 表示只展示不强调。"""
+
+    blocks = []
+
+    for index, step in enumerate(steps, start=1):
+        active_class = " wm-step-active" if index - 1 == active else ""
+        blocks.append(
+            f'<div class="wm-step{active_class}">'
+            f'<span class="wm-step-index">{index:02d}</span>{step}</div>'
+        )
+
+    st.markdown(
+        '<div class="wm-steps">' + "".join(blocks) + "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def data_list(
+    headers: list[str],
+    rows: list[list[str]],
+    widths: list[str] | None = None,
+    empty: str = "暂无数据",
+) -> None:
+    """深色列表，替代默认 dataframe 的灰底方块。
+
+    rows 里的内容一律按纯文本转义；需要标签时先用 tag() 生成。
+    """
+
+    template = " ".join(widths or ["1fr"] * len(headers))
+
+    if not rows:
+        st.markdown(
+            f'<div class="wm-list"><div class="wm-list-empty">{escape(empty)}</div></div>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    head = "".join(f"<div>{escape(str(item))}</div>" for item in headers)
+
+    body = "".join(
+        '<div class="wm-list-row" style="grid-template-columns:'
+        + template
+        + '">'
+        + "".join(f"<div>{escape(str(cell))}</div>" for cell in row)
+        + "</div>"
+        for row in rows
+    )
+
+    st.markdown(
+        f'<div class="wm-list">'
+        f'<div class="wm-list-head" style="grid-template-columns:{template}">{head}</div>'
+        f"{body}</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def empty_state(title: str, text: str = "") -> None:
+    """空状态占位，避免页面出现大片空白。"""
+
+    st.markdown(
+        f'<div class="wm-empty">'
+        f'<p class="wm-empty-title">{escape(title)}</p>'
+        f'<p class="wm-empty-text">{escape(text)}</p>'
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def tag(text: str, kind: str = "info") -> str:
+    """生成一个标签的 HTML 片段，供 data_list 之外的卡片拼接使用。"""
+
+    kind_class = {
+        "high": " wm-tag-high",
+        "medium": " wm-tag-medium",
+        "low": " wm-tag-low",
+    }.get(kind, "")
+
+    return f'<span class="wm-tag{kind_class}">{escape(text)}</span>'

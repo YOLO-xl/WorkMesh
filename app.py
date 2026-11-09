@@ -17,9 +17,10 @@ from database.migration import initialize_database
 from database.feedback_repository import FeedbackRepository
 from database.evidence_repository import EvidenceRepository
 from ui.theme import apply_theme, hero
-from ui.home_page import render as render_home_page
+from ui.overview_page import render as render_overview_page
 from ui.analytics_page import render as render_analytics_page
 from ui.evidence_page import render as render_evidence_page
+from ui.cluster_page import render as render_cluster_page
 from ui.diagnosis_page import render as render_diagnosis_page
 
 
@@ -70,8 +71,30 @@ st.set_page_config(
 
 apply_theme()
 
+PAGES = [
+    "系统概览",
+    "数据接入",
+    "证据关联",
+    "问题聚类",
+    "反馈分析",
+    "单条诊断",
+    "报告中心",
+]
+
 if "page_navigation" not in st.session_state:
-    st.session_state.page_navigation = "工作台首页"
+    st.session_state.page_navigation = "系统概览"
+
+# 支持 ?page=问题聚类 这类深链接，方便把某个页面直接发给同事。
+requested_page = st.query_params.get("page")
+
+if (
+    requested_page
+    and requested_page in PAGES
+    and st.session_state.get("wm_deeplink") != requested_page
+):
+    st.session_state.page_navigation = requested_page
+    st.session_state.wm_deeplink = requested_page
+
 
 def go_to_page(page):
     st.session_state.page_navigation = page
@@ -99,24 +122,26 @@ st.sidebar.divider()
 
 page = st.sidebar.radio(
     "工作空间",
-    [
-        "工作台首页",
-        "数据接入",
-        "证据关联",
-        "反馈分析",
-        "智能诊断",
-        "报告中心",
-    ],
+    PAGES,
     key="page_navigation",
 )
 
 st.sidebar.divider()
-st.sidebar.caption("v0.3.0-dev · 本地运行")
+
+if page in ("数据接入", "证据关联"):
+    st.sidebar.caption("STEP 01-02 · 先有数据，再有证据")
+    st.sidebar.caption("先导入反馈，再接入日志 / 指标")
+else:
+    st.sidebar.caption("v0.4.0-dev · 本地运行")
 
 
-# 首页
-if page == "工作台首页":
-    render_home_page(feedback_repository, evidence_repository, feedback_repository.get_default_workspace())
+# 系统概览
+if page == "系统概览":
+    render_overview_page(
+        feedback_repository,
+        evidence_repository,
+        feedback_repository.get_default_workspace(),
+    )
 
 
 # 数据接入
@@ -410,13 +435,18 @@ elif page == "证据关联":
     render_evidence_page()
 
 
+# 问题聚类
+elif page == "问题聚类":
+    render_cluster_page()
+
+
 # 反馈分析
 elif page == "反馈分析":
     render_analytics_page(feedback_repository, feedback_repository.get_default_workspace())
 
 
-# 智能诊断
-elif page == "智能诊断":
+# 单条诊断
+elif page == "单条诊断":
     render_diagnosis_page()
 
 
@@ -429,7 +459,7 @@ else:
     )
     st.write("")
     st.button(
-        "返回工作台首页",
+        "返回系统概览",
         on_click=go_to_page,
-        args=("工作台首页",),
+        args=("系统概览",),
     )

@@ -19,9 +19,9 @@ def _feedback_label(record: dict) -> str:
 
 def render(db_path=None) -> None:
     hero(
-        "智能诊断",
-        "先用可解释规则算出证据，再让模型写结论；每条结论必须能回溯到证据 ID",
-        ["Evidence Grounded", "Citation Checked", "Rule + LLM"],
+        "单条诊断",
+        "针对一条反馈：先用可解释规则算出证据，再让模型写结论；每条结论必须能回溯到证据 ID",
+        ["Single Feedback", "Evidence Grounded", "Citation Checked"],
     )
 
     initialize_database(db_path)
@@ -41,10 +41,20 @@ def render(db_path=None) -> None:
         st.info("还没有反馈数据，请先到「数据接入」导入反馈文件。")
         return
 
-    section("选择诊断对象", "以一条反馈为锚点，关联窗口内的日志与指标")
+    section("选择分析对象", "以一条反馈为锚点，关联窗口内的日志与指标")
+    record_ids = [record["id"] for record in records]
+    preselected = st.session_state.get("diagnosis_feedback")
+
+    if preselected and preselected not in record_ids:
+        st.session_state.pop("diagnosis_feedback", None)
+        preselected = None
+
+    if preselected:
+        st.caption("已从问题簇带入一条反馈，可直接生成诊断。")
+
     feedback_id = st.selectbox(
         "反馈记录",
-        options=[record["id"] for record in records],
+        options=record_ids, index=record_ids.index(preselected) if preselected else 0,
         format_func=lambda value: _feedback_label(
             next(record for record in records if record["id"] == value)
         ),
