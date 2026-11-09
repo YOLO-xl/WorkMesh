@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.6.0-dev] - 2026-11-09
+
+### Added
+- 症状词典（`services/symptom_lexicon.py`）：13 类用户口语现象、约 40 个功能实体、
+  套话与停用词表；`normalize_text` 去客套话/URL、`extract_symptoms`、
+  `extract_features`、`keywords`、`is_suggestion`。
+- 无错误码聚类：`_group_without_error_code` 用「现象覆盖 + 实体覆盖 + 3-gram 相似
+  + 版本/平台一致」加权打分，增量归簇；实体冲突扣分，超过 21 天时间跨度不合并。
+- 未归类池：既没有现象也没有实体、或是产品建议的反馈不强行归簇，
+  聚类页单独展开并说明原因。
+- 簇关键词：卡片与详情展示高频词（现象词加权），详情用字号变化的 HTML 词云呈现。
+- 「反馈全景」（`ui/analytics_page.py`）：可识别现象、无错误码反馈、无错误码占比、
+  提及功能数，配现象/功能条形图与按现象下钻。
+- 100 条无错误码样例（`data/sample/feedback_sample_no_code.csv`）与回归测试。
+- `WORKMESH_DB_PATH` 环境变量可指定库文件，便于用样例库起演示实例。
+
+### Changed
+- 无错误码的簇标题改为「产品 · 主导现象」；现象标签词表补充白屏、卡死、数据等。
+
 ## [0.5.0-dev] - 2026-11-09
 
 ### Added

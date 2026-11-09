@@ -27,6 +27,10 @@ def _cluster_card(cluster: dict) -> str:
         tag(f"{item['label']} {item['count']}", "low")
         for item in cluster["phenomena"][:4]
     )
+    keywords = cluster.get("keywords") or []
+    keyword_chips = " ".join(
+        tag(f"{item['name']}", "medium") for item in keywords[:5]
+    )
 
     return f"""
     <div class="wm-cluster">
@@ -44,6 +48,7 @@ def _cluster_card(cluster: dict) -> str:
             · 平台 {", ".join(escape(p['name']) for p in cluster['platforms'][:3]) or '—'}
         </p>
         <div class="wm-chips" style="margin-top:0.55rem">{phenomena}</div>
+        <div class="wm-chips" style="margin-top:0.4rem">{keyword_chips}</div>
     </div>
     """
 
@@ -58,9 +63,10 @@ def render(db_path=None) -> None:
     feedback_repository = FeedbackRepository(db_path)
     workspace_id = feedback_repository.get_default_workspace()
 
-    section("聚类口径", "产品 + 错误码分组，簇内再分现象；不做语义猜测")
+    section("聚类口径", "产品分桶；有错误码按码归并，无码按现象 + 功能归并")
     st.caption(
-        "同一产品的同一错误码视为同一类问题；错误码缺失时按描述文本相似度归并。"
+        "同一产品的同一错误码视为同一类问题；错误码缺失时，先把描述归约成"
+        "「现象 + 功能」再按加权分归并，识别不出的反馈进「未归类池」，不强行归类。"
         "簇只表示「看起来是同一批问题」，不构成根因结论。"
     )
 
@@ -94,11 +100,12 @@ def render(db_path=None) -> None:
     stats = data["stats"]
     clusters = data["clusters"]
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("反馈总量", stats["total"])
     c2.metric("问题簇", stats["cluster_count"])
     c3.metric("已归簇反馈", stats["clustered"])
     c4.metric("孤立反馈", stats["singleton_count"])
+    c5.metric("未归类", stats.get("unclassified_count", 0))
 
     if not clusters:
         empty_state(
@@ -142,6 +149,7 @@ def render(db_path=None) -> None:
             _render_detail(cluster, workspace_id, db_path)
 
     _render_singletons(data["singletons"])
+    _render_unclassified(data.get("unclassified", []))
 
 
 def _render_detail(cluster: dict, workspace_id: str, db_path) -> None:
@@ -161,6 +169,10 @@ def _render_detail(cluster: dict, workspace_id: str, db_path) -> None:
         f"排序分 {cluster['score']} · "
         f"时间范围 {cluster['first_seen'] or '—'} → {cluster['last_seen'] or '—'}"
     )
+
+    if cluster.get("keywords"):
+        section("关键词", "字号按簇内出现频次，快速看出这簇在说什么")
+        st.markdown(_keyword_cloud(cluster["keywords"]), unsafe_allow_html=True)
 
     section("现象分组", "同一错误码下用户实际感知到的表现")
     rows = [
@@ -241,6 +253,62 @@ def _render_detail(cluster: dict, workspace_id: str, db_path) -> None:
         st.warning(
             "这个簇在时间范围内没有接入日志或指标证据，"
             "结论只能停在「用户反馈层面」。先去「证据关联」接入该服务的日志或指标。"
+        )
+
+
+def _keyword_cloud(keywords: list[dict]) -> str:
+    """轻量「词云」：不引额外依赖，按频次给字号，比图片更可读、可复制。"""
+
+    if not keywords:
+        return ""
+
+    maximum = max(item["count"] for item in keywords) or 1
+    spans = []
+
+    for item in keywords:
+        weight = item["count"] / maximum
+        size = 0.82 + weight * 0.55
+        opacity = 0.55 + weight * 0.45
+        spans.append(
+            f'<span style="font-size:{size:.2f}rem;color:rgba(199,210,254,{opacity:.2f});'
+            f'font-weight:{600 if weight >= 0.6 else 500}">{escape(item["name"])}'
+            f'<span style="font-size:0.6rem;color:var(--wm-faint)"> {item["count"]}</span></span>'
+        )
+
+    return (
+        '<div style="display:flex;flex-wrap:wrap;gap:0.5rem 0.9rem;'
+        'padding:0.9rem 1rem;border:1px solid var(--wm-border);'
+        'border-radius:var(--wm-radius-sm);background:rgba(15,23,42,0.55)">'
+        + "".join(spans)
+        + "</div>"
+    )
+
+
+def _render_unclassified(records: list[dict]) -> None:
+    """没有错误码、也识别不出现象与实体的反馈：不强行归类，单独成池。"""
+
+    if not records:
+        return
+
+    with st.expander(f"未归类反馈（{len(records)} 条）", expanded=False):
+        st.caption(
+            "这些反馈没有错误码，也识别不出具体现象或功能，强行归簇会制造错误结论，"
+            "先放在这里。补全描述、或把新说法加进症状词典后再归类。"
+        )
+        rows = [
+            [
+                (item.get("feedback_time") or "—")[:16],
+                item.get("external_id") or "—",
+                item.get("product") or "—",
+                (item.get("description") or "—")[:48],
+            ]
+            for item in records
+        ]
+        data_list(
+            ["时间", "反馈号", "产品", "描述"],
+            rows,
+            widths=["1.2fr", "0.7fr", "0.9fr", "3fr"],
+            empty="没有未归类反馈",
         )
 
 

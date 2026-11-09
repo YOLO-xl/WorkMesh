@@ -124,3 +124,64 @@ def test_text_similarity_is_symmetric_and_bounded():
     assert text_similarity(None, "加载") == 0.0
     assert 0.0 <= text_similarity("直播间加载失败", "直播间加载不出来") <= 1.0
     assert text_similarity("直播间加载失败", "直播间加载失败") == 1.0
+
+
+def test_feedback_without_error_code_groups_by_symptoms(
+    cluster_service, make_feedback, workspace_id
+):
+    for description in (
+        "打开直播间一直转圈",
+        "进直播间一直转圈打不开",
+        "直播间转圈进不去",
+        "点开直播间转圈",
+    ):
+        make_feedback(error_code="", description=description)
+
+    make_feedback(error_code="", description="希望增加夜间模式，界面再快点")
+    make_feedback(error_code="", description="整体不错，继续加油")
+
+    result = cluster_service.build(workspace_id, min_size=2, with_evidence=False)
+
+    assert result["stats"]["cluster_count"] == 1
+    cluster = result["clusters"][0]
+    assert cluster["size"] == 4
+    assert cluster["title"] == "直播SDK · 转圈"
+    assert result["stats"]["unclassified_count"] == 2
+    assert {item["description"] for item in result["unclassified"]} == {
+        "希望增加夜间模式，界面再快点",
+        "整体不错，继续加油",
+    }
+
+
+def test_different_symptoms_stay_in_separate_clusters(
+    cluster_service, make_feedback, workspace_id
+):
+    for _ in range(2):
+        make_feedback(error_code="", description="下单之后订单金额不对")
+    for _ in range(2):
+        make_feedback(error_code="", description="登录不上，一直掉线")
+
+    result = cluster_service.build(workspace_id, min_size=2, with_evidence=False)
+
+    assert result["stats"]["cluster_count"] == 2
+
+
+def test_hundred_plain_feedback_sample_offline():
+    """100 条无错误码样例：按现象聚成 6 组，产品建议进未归类。"""
+
+    import csv
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parent.parent / "data" / "sample" / "feedback_sample_no_code.csv"
+    rows = list(csv.DictReader(path.open(encoding="utf-8-sig")))
+
+    groups, unclassified = ClusterService._group_without_error_code(rows)
+
+    assert len(rows) == 100
+    assert len(groups) == 6
+    assert len(unclassified) == 20
+    assert max(len(group) for group in groups) == 16
+    # 建议类文本不该混进故障簇
+    for group in groups:
+        for record in group:
+            assert "建议" not in record["description"]

@@ -5,8 +5,10 @@
 
 聚类口径（刻意保持可解释）：
 1. 产品 + 错误码是强分组键；同一产品的同一错误码视为同一类问题。
-2. 错误码缺失时，退化为按描述文本的字符二元组相似度做单链聚合。
-3. 簇内部再按文本相似度切「现象分组」，用来回答「同一问题表现成几种样子」，
+2. 错误码缺失时（普通用户反馈的常态），不再只看文本相似度，而是把描述归约成
+   「现象标签 + 功能实体」，再叠加文本、版本、平台做加权打分，增量并簇。
+   完全没有现象也没有实体的反馈不强行归类，单独进「未归类池」。
+3. 簇内部再按现象分组，用来回答「同一问题表现成几种样子」，
    只用于展示，不改变簇的边界。
 
 不做事：不做语义向量聚类、不猜测根因、不把簇当成故障结论。
@@ -22,17 +24,29 @@ from typing import Optional
 from core.evidence import format_timestamp, parse_timestamp
 from database.evidence_repository import EvidenceRepository
 from database.feedback_repository import FeedbackRepository
+from services.symptom_lexicon import (
+    compact_text,
+    extract_features,
+    extract_symptoms,
+    is_suggestion,
+    keywords,
+)
 
 
 DEFAULT_MIN_SIZE = 2
 PHENOMENON_THRESHOLD = 0.34
 
+# 无错误码反馈的并簇阈值：现象、实体、文本、版本/平台四项加权后达到该分值才合并。
+MERGE_THRESHOLD = 0.45
+# 单簇允许的最大时间跨度，防止「同一个现象、隔了两个月」被链成一簇。
+MAX_CLUSTER_SPAN_DAYS = 21
+
 # 现象标签词表：用来回答「同一错误码，用户感知到的现象有几种」。
 # 这是展示层的粗分类，不参与簇边界判定。
 PHENOMENON_KEYWORDS = (
-    "黑屏", "花屏", "卡顿", "闪退", "崩溃", "加载", "转圈",
+    "黑屏", "花屏", "白屏", "卡顿", "卡死", "闪退", "崩溃", "加载", "转圈",
     "超时", "登录", "退出", "初始化", "回调", "播放失败",
-    "无法播放", "无声", "延迟",
+    "无法播放", "无声", "延迟", "报错", "上传失败", "下载失败", "数据",
 )
 
 _SEVERITY_LABELS = {"high": "高", "medium": "中", "low": "低"}
@@ -70,6 +84,70 @@ def text_similarity(left: Optional[str], right: Optional[str]) -> float:
         return 0.0
 
     return len(a & b) / len(a | b)
+
+
+def _ngrams(text: str, size: int = 3) -> set[str]:
+    if len(text) < size:
+        return {text} if text else set()
+    return {text[index:index + size] for index in range(len(text) - size + 1)}
+
+
+def _jaccard(left: set, right: set) -> float:
+    if not left or not right:
+        return 0.0
+    return len(left & right) / len(left | right)
+
+
+def _coverage(needle: set, haystack: set) -> float:
+    """needle 被 haystack 覆盖的比例，用于「单条 vs 簇质心」的比较。"""
+
+    if not needle:
+        return 0.0
+    return len(needle & haystack) / len(needle)
+
+
+def text_similarity_v2(left: Optional[str], right: Optional[str]) -> float:
+    """字符三元组 Jaccard，比二元组更能区分「转圈打不开」和「打不开设置页」。"""
+
+    value = _jaccard(
+        _ngrams(compact_text(left)),
+        _ngrams(compact_text(right)),
+    )
+    return value
+
+
+def record_signals(record: dict) -> dict:
+    text = record.get("description")
+    return {
+        "symptoms": set(extract_symptoms(text)),
+        "features": set(extract_features(text)),
+        "text": compact_text(text),
+        "version": str(record.get("version") or "").strip().lower(),
+        "platform": str(record.get("platform") or "").strip().lower(),
+    }
+
+
+def weighted_similarity(left: dict, right: dict) -> float:
+    """现象 0.45 + 实体 0.25 + 文本 0.20 + 版本/平台 0.10。"""
+
+    score = 0.0
+    score += 0.45 * _jaccard(left["symptoms"], right["symptoms"])
+    score += 0.25 * _jaccard(left["features"], right["features"])
+    score += 0.20 * _jaccard(
+        _ngrams(left["text"]),
+        _ngrams(right["text"]),
+    )
+
+    if left["version"] and left["version"] == right["version"]:
+        score += 0.06
+    if left["platform"] and left["platform"] == right["platform"]:
+        score += 0.04
+
+    return score
+
+
+def _has_signals(signals: dict) -> bool:
+    return bool(signals["symptoms"] or signals["features"])
 
 
 def _top_values(members: list[dict], field: str, limit: int = 3) -> list[dict]:
@@ -116,6 +194,8 @@ def _cluster_id(member_ids: list[str]) -> str:
 
 
 def _phenomenon_tag(description: Optional[str]) -> str:
+    """展示层的粗现象标签，保持旧的短词口径，避免把「加载」拆成「加载失败」。"""
+
     text = str(description or "")
 
     for keyword in PHENOMENON_KEYWORDS:
@@ -148,6 +228,23 @@ def _group_by_phenomenon(members: list[dict]) -> list[dict]:
 
     phenomena.sort(key=lambda item: (-item["count"], item["label"]))
     return phenomena
+
+
+def _cluster_keywords(member_views: list[dict], limit: int = 6) -> list[dict]:
+    """簇内高频关键词，现象词权重加倍，用于卡片 chips 与词云大小。"""
+
+    counter: Counter[str] = Counter()
+
+    for member in member_views:
+        for word in keywords(member.get("description"), limit=6):
+            counter[word] += 1
+        for symptom in extract_symptoms(member.get("description")):
+            counter[symptom] += 1
+
+    return [
+        {"name": word, "count": count}
+        for word, count in counter.most_common(limit)
+    ]
 
 
 def _severity(size: int, unique_users: int) -> str:
@@ -244,11 +341,13 @@ class ClusterService:
             return {
                 "clusters": [],
                 "singletons": [],
+                "unclassified": [],
                 "stats": {
                     "total": 0,
                     "clustered": 0,
                     "cluster_count": 0,
                     "singleton_count": 0,
+                    "unclassified_count": 0,
                     "coverage": 0.0,
                 },
             }
@@ -264,9 +363,14 @@ class ClusterService:
 
         clusters = []
         singletons = []
+        unclassified = []
 
         for (product, error_code), members in buckets.items():
-            groups = self._split_by_text(members) if not error_code else [members]
+            if error_code:
+                groups, uncovered = [members], []
+            else:
+                groups, uncovered = self._group_without_error_code(members)
+                unclassified.extend(_member_view(item) for item in uncovered)
 
             for group in groups:
                 if len(group) < min_size:
@@ -285,15 +389,20 @@ class ClusterService:
         )
 
         clustered = sum(item["size"] for item in clusters)
+        unclassified.sort(
+            key=lambda item: item.get("feedback_time") or "", reverse=True
+        )
 
         return {
             "clusters": clusters,
             "singletons": singletons,
+            "unclassified": unclassified,
             "stats": {
                 "total": len(records),
                 "clustered": clustered,
                 "cluster_count": len(clusters),
                 "singleton_count": len(singletons),
+                "unclassified_count": len(unclassified),
                 "coverage": round(clustered / len(records), 3) if records else 0.0,
             },
         }
@@ -302,20 +411,88 @@ class ClusterService:
     # 内部
     # ------------------------------------------------------------------
     @staticmethod
-    def _split_by_text(records: list[dict], threshold: float = PHENOMENON_THRESHOLD) -> list[list[dict]]:
-        groups: list[list[dict]] = []
+    def _group_without_error_code(
+        records: list[dict],
+        threshold: float = MERGE_THRESHOLD,
+    ) -> tuple[list[list[dict]], list[dict]]:
+        """无错误码反馈的增量聚类。
+
+        每条反馈与已有簇的「现象/实体集合 + 代表描述」比较，达到阈值且不超出
+        时间跨度就并入；否则自成一簇。返回 (分组, 未归类反馈)。
+        """
+
+        groups: list[dict] = []
+        unclassified: list[dict] = []
 
         for record in records:
-            for group in groups:
-                if text_similarity(
-                    record.get("description"), group[0].get("description")
-                ) >= threshold:
-                    group.append(record)
-                    break
-            else:
-                groups.append([record])
+            signals = record_signals(record)
+            stamp = parse_timestamp(record.get("feedback_time"))
 
-        return groups
+            if not _has_signals(signals) or is_suggestion(record.get("description")):
+                # 既没现象也没实体，或是产品建议，都不强行归入故障簇
+                unclassified.append(record)
+                continue
+
+            best_group = None
+            best_score = 0.0
+
+            for group in groups:
+                score = 0.0
+                score += 0.45 * _coverage(signals["symptoms"], group["symptoms"])
+                score += 0.25 * _coverage(signals["features"], group["features"])
+                score += 0.20 * max(
+                    text_similarity_v2(record.get("description"), sample)
+                    for sample in group["samples"]
+                )
+                if signals["version"] and signals["version"] == group["version"]:
+                    score += 0.06
+                if signals["platform"] and signals["platform"] == group["platform"]:
+                    score += 0.04
+                # 两边都识别出了功能、且完全不同时，多半不是同一问题，压低分数
+                if (
+                    signals["features"]
+                    and group["features"]
+                    and not signals["features"] & group["features"]
+                ):
+                    score -= 0.12
+
+                if score <= best_score:
+                    continue
+                if (
+                    stamp is not None
+                    and group["first"] is not None
+                    and group["last"] is not None
+                    and (max(stamp, group["last"]) - min(stamp, group["first"])).days
+                    > MAX_CLUSTER_SPAN_DAYS
+                ):
+                    continue
+
+                best_score = score
+                best_group = group
+
+            if best_group is not None and best_score >= threshold:
+                best_group["members"].append(record)
+                best_group["symptoms"] |= signals["symptoms"]
+                best_group["features"] |= signals["features"]
+                best_group["samples"] = (best_group["samples"] + [record.get("description")])[-3:]
+                if stamp is not None:
+                    best_group["first"] = stamp if best_group["first"] is None else min(best_group["first"], stamp)
+                    best_group["last"] = stamp if best_group["last"] is None else max(best_group["last"], stamp)
+            else:
+                groups.append(
+                    {
+                        "members": [record],
+                        "symptoms": set(signals["symptoms"]),
+                        "features": set(signals["features"]),
+                        "samples": [record.get("description")],
+                        "version": signals["version"],
+                        "platform": signals["platform"],
+                        "first": stamp,
+                        "last": stamp,
+                    }
+                )
+
+        return [group["members"] for group in groups], unclassified
 
     def _build_cluster(
         self,
@@ -343,7 +520,12 @@ class ClusterService:
         versions = _top_values(member_views, "version")
         platforms = _top_values(member_views, "platform")
 
-        title_code = error_code or "无错误码"
+        if error_code:
+            title_code = error_code
+        elif dominant and dominant != "其他":
+            title_code = dominant
+        else:
+            title_code = "疑似同类"
 
         return {
             "cluster_id": _cluster_id([item["id"] for item in member_views]),
@@ -358,6 +540,7 @@ class ClusterService:
             "versions": versions,
             "platforms": platforms,
             "phenomena": phenomena,
+            "keywords": _cluster_keywords(member_views),
             "severity": severity,
             "score": score,
             "evidence": evidence,

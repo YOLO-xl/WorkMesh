@@ -9,7 +9,7 @@ import streamlit as st
 from ui.theme import empty_state, icon
 
 
-VERSION = "v0.5.0-dev"
+VERSION = "v0.6.0-dev"
 
 
 def _brand_html() -> str:
