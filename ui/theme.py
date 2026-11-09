@@ -79,14 +79,22 @@ h1, h2, h3, h4 {
 }
 
 /* ---------- 顶部导航 ---------- */
+/* 吸顶要挂在外层 stElementContainer 上：内层容器的高度只有自身高度，
+   sticky 会被父级高度夹住而失效 */
+div[data-testid="stLayoutWrapper"]:has(div[class*="st-key-wm_topbar"]) {
+    position: sticky;
+    top: 4.3rem;
+    z-index: 40;
+}
+
 div[class*="st-key-wm_topbar"] {
-    background: rgba(11, 16, 30, 0.78);
+    background: rgba(9, 13, 24, 0.96);
     border: 1px solid var(--wm-border);
     border-radius: var(--wm-radius);
     padding: 0.55rem 1rem;
     margin-bottom: 1.1rem;
-    backdrop-filter: blur(14px);
-    box-shadow: 0 8px 24px rgba(2, 6, 23, 0.28);
+    backdrop-filter: blur(18px) saturate(120%);
+    box-shadow: 0 10px 30px rgba(2, 6, 23, 0.55);
 }
 
 div[class*="st-key-wm_topbar"] [data-testid="stHorizontalBlock"] {
