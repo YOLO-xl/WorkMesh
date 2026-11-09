@@ -108,24 +108,27 @@ def render(db_path=None) -> None:
         _render_singletons(data["singletons"])
         return
 
-    section("问题簇列表", "按影响面排序，点击查看详情")
+    section("问题簇列表", "按影响面排序，点开哪一张就在哪一张下面展开详情")
     stepper(
         ["聚类定位", "选定簇", "查看成员与现象", "跳到单条诊断"],
         active=0,
     )
 
+    selected_id = st.session_state.get("cluster_selected")
+
     for cluster in clusters:
         st.markdown(_cluster_card(cluster), unsafe_allow_html=True)
 
+        is_open = cluster["cluster_id"] == selected_id
         button_col, meta_col = st.columns([1, 3])
 
         with button_col:
             st.button(
-                "查看簇详情",
+                "收起详情" if is_open else "查看簇详情",
                 key=f"cluster_open_{cluster['cluster_id']}",
                 use_container_width=True,
-                on_click=st.session_state.__setitem__,
-                args=("cluster_selected", cluster["cluster_id"]),
+                on_click=_toggle_cluster,
+                args=(cluster["cluster_id"],),
             )
 
         with meta_col:
@@ -134,20 +137,14 @@ def render(db_path=None) -> None:
                 f"· 代表反馈 {cluster['representative'].get('external_id') or '—'}"
             )
 
-    selected_id = st.session_state.get("cluster_selected")
-    selected = next(
-        (item for item in clusters if item["cluster_id"] == selected_id), None
-    )
+        # 详情就地展开，避免点了按钮却要滚到页面底部才看到变化
+        if is_open:
+            _render_detail(cluster, workspace_id, db_path)
 
-    if selected is None:
-        selected = clusters[0]
-
-    _render_detail(selected, workspace_id, db_path)
     _render_singletons(data["singletons"])
 
 
 def _render_detail(cluster: dict, workspace_id: str, db_path) -> None:
-    st.divider()
     section(
         f"簇详情 · {cluster['title']}",
         "成员、现象分组与证据情况",
@@ -267,6 +264,15 @@ def _render_singletons(singletons: list[dict]) -> None:
             widths=["1.2fr", "0.9fr", "0.7fr", "2.6fr"],
             empty="没有孤立反馈",
         )
+
+
+def _toggle_cluster(cluster_id: str) -> None:
+    """再次点击同一簇时收起详情。"""
+
+    if st.session_state.get("cluster_selected") == cluster_id:
+        st.session_state["cluster_selected"] = None
+    else:
+        st.session_state["cluster_selected"] = cluster_id
 
 
 def _goto_diagnosis(feedback_id: str) -> None:
