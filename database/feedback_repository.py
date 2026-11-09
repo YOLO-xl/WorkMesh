@@ -470,6 +470,7 @@ class FeedbackRepository:
         products: Optional[Iterable[str]] = None,
         error_codes: Optional[Iterable[str]] = None,
         uid: Optional[str] = None,
+        keyword: Optional[str] = None,
         start: Optional[str] = None,
         end: Optional[str] = None,
         limit: int = 200,
@@ -504,6 +505,13 @@ class FeedbackRepository:
         if uid:
             conditions.append("uid = ?")
             parameters.append(str(uid))
+
+        if keyword:
+            keyword_like = f"%{str(keyword).strip()}%"
+            conditions.append(
+                "(description LIKE ? OR error_code LIKE ? OR external_id LIKE ?)"
+            )
+            parameters.extend([keyword_like, keyword_like, keyword_like])
 
         if start:
             conditions.append("feedback_time >= ?")

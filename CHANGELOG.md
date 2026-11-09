@@ -3,12 +3,27 @@
 ## [0.7.0-dev] - 2026-11-09
 
 ### Added
+- 直播进入房间失败场景 `live.enter_room_failure`（priority 75）：4 个 source /
+  5 个 signal / 5 个 step / 5 条规则；支持 `attributes.metric_value` 点路径取值，
+  指标信号不再恒为 None；规则输出带真实 `evidence_ids`。
+- `MultiSourceQueryService`：本地反馈 + 本地证据 + 可选 Elasticsearch /
+  Prometheus 连接器统一查询，支持跨平台过滤、去重、关联打分与原始记录追溯；
+  外部源失败保留 `available:false`，不伪造数据。
+- `TroubleshootingService` + 「故障排查」页面：以 F001 进入直播间失败为样例，
+  串起反馈接入 → 多系统查询 → 证据关联 → 场景判定 → 结论与追溯；
+  五段状态、证据链、场景事实 / 假设 / 动作、原始记录回看与 Markdown 下载。
+- `FeedbackRepository.query_feedback()` 增加 `keyword`；`EvidenceRepository.query_evidence()`
+  增加 `titles` / `keyword`；新增 `get_source()` 供原始来源展示。
+- `DiagnosisService.build()` 返回完整 `context`，排查服务可直接复用关联结果。
+- `tests/test_multi_source_query_service.py` 4 项、`tests/test_troubleshooting_service.py`
+  2 项；测试总数 137 → 144。
 - 故障场景模型第一阶段（`docs/FAULT_SCENARIO_MODEL.md` +
   `services/fault_scenario_service.py`）：JSON 配置 + 声明式规则，
   支持场景注册、校验、匹配、信号计算、步骤判定、规则执行、置信度降级与
   禁用根因词校验；配置目录 `configs/fault_scenarios/`。
-- 三个首批场景：`login.code_delivery`（登录验证码收不到）、
-  `payment.result_mismatch`（支付结果不一致）、`generic.triage`（通用兜底）。
+- 四个首批场景：`login.code_delivery`（登录验证码收不到）、
+  `live.enter_room_failure`（直播进入房间失败）、`payment.result_mismatch`
+  （支付结果不一致）、`generic.triage`（通用兜底）。
 - 场景数据源：本地 `feedback` / `evidence` / `manual`；`connector` 通过可注入
   的 `connector_provider` 预留，真实 ES / Prometheus 仍属阶段 2。
 - 单条诊断接入场景运行结果：诊断页新增「故障场景」卡片（命中场景、状态、
@@ -20,7 +35,8 @@
   增加按产品、错误码、UID、服务、Trace / Request ID 与时间窗口过滤。
 - `docs/FUNCTIONAL_BOUNDARY_AUDIT.md`：现有代码与功能边界审计，区分真完成 /
   未验证 / 初步实现 / 仅接口。
-- `tests/test_fault_scenario_service.py` 11 项回归，测试总数 137。
+- `tests/test_fault_scenario_service.py` 12 项回归（含直播场景与嵌套指标取值），
+  全量测试 144。
 - 周期性分析报告（Schema v6 `periodic_reports`，`PeriodicReportService` /
   `PeriodicReportRepository`）：按日期区间汇总反馈量、涉及用户、每日趋势、
   「产品 + 错误码」主要问题、无码现象词、报告沉淀与处理状态；

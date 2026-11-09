@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from core.evidence import Evidence
 from services.diagnosis_service import DiagnosisService
 from services.evidence_service import EvidenceService
 from services.fault_scenario_service import (
@@ -116,6 +117,7 @@ def test_registry_loads_all_three_scenarios_without_errors():
     assert registry.errors == []
     assert {item["id"] for item in registry.enabled()} == {
         "login.code_delivery",
+        "live.enter_room_failure",
         "payment.result_mismatch",
         "generic.triage",
     }
@@ -332,3 +334,95 @@ def test_diagnosis_build_attaches_scenario_run(
     assert "故障场景" in result["markdown"]
     assert "## 故障场景" not in result["markdown_body"]
     assert any("补充数据源" in item["action"] for item in result["next_steps"])
+
+
+def _live_feedback():
+    return {
+        "id": "fb-live-1",
+        "uid": "10086231",
+        "feedback_time": "2026-11-01T09:15:22Z",
+        "product": "直播SDK",
+        "version": "8.6.2",
+        "platform": "iOS",
+        "error_code": "E1001",
+        "description": "进入直播间后一直加载无法播放",
+    }
+
+
+class FakeLiveEvidenceRepository:
+    def __init__(self):
+        self.logs = [
+            Evidence(
+                evidence_type="log",
+                record_id="log-0001",
+                timestamp="2026-11-01T09:14:50Z",
+                uid="10086231",
+                trace_id="trace-0001",
+                service="直播SDK",
+                error_code="E1001",
+                message="rtmp connect timeout",
+                evidence_id="ev-log-1",
+            ),
+            Evidence(
+                evidence_type="log",
+                record_id="log-0002",
+                timestamp="2026-11-01T09:15:05Z",
+                uid="10086231",
+                trace_id="trace-0001",
+                service="直播SDK",
+                error_code="E1001",
+                message="player init failed",
+                evidence_id="ev-log-2",
+            ),
+        ]
+        self.metrics = {
+            "live_player_init_fail_rate": Evidence(
+                evidence_type="metric",
+                record_id="metric-1",
+                timestamp="2026-11-01T09:16:00Z",
+                service="直播SDK",
+                title="live_player_init_fail_rate",
+                attributes={"metric_value": 0.182},
+                evidence_id="ev-metric-1",
+            ),
+            "live_room_enter_p99_ms": Evidence(
+                evidence_type="metric",
+                record_id="metric-2",
+                timestamp="2026-11-01T09:16:00Z",
+                service="直播SDK",
+                title="live_room_enter_p99_ms",
+                attributes={"metric_value": 4280},
+                evidence_id="ev-metric-2",
+            ),
+        }
+
+    def query_evidence(self, workspace_id, **kwargs):
+        titles = kwargs.get("titles") or []
+        if titles:
+            return [self.metrics[title] for title in titles if title in self.metrics]
+        return list(self.logs)
+
+
+def test_live_scenario_matches_and_reads_nested_metric_value():
+    scenario, score, reasons = match_scenario(
+        _live_feedback(), FaultScenarioRegistry().enabled()
+    )
+
+    assert scenario["id"] == "live.enter_room_failure"
+    assert score >= 40
+    assert any("直播SDK" in reason for reason in reasons)
+
+    run = ScenarioRunner(
+        feedback_repository=FakeFeedbackRepository([_live_feedback(), _live_feedback()]),
+        evidence_repository=FakeLiveEvidenceRepository(),
+    ).run("workspace", _live_feedback(), scenario)
+
+    assert run["status"] == "verified"
+    assert run["signals"]["player_init_fail_rate"] == 0.182
+    assert run["signals"]["enter_latency_p99"] == 4280
+    assert run["signals"]["log_trace_count"] == 1
+    assert any(item["rule_id"] == "uid_trace_chain" for item in run["hypotheses"])
+    assert all(
+        item["evidence_ids"]
+        for item in run["hypotheses"]
+    )

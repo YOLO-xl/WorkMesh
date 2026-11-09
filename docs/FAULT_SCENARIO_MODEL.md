@@ -627,7 +627,12 @@ ScenarioRunner
 - `feedback` / `evidence` / `manual` 三类本地 source 已接入；`connector` 通过可注入的 `connector_provider` 预留，未接真实 ES / Prometheus。
 - `login.code_delivery`、`payment.result_mismatch`、`generic.triage` 三个场景；单条诊断页增加场景卡片、排查步骤表、缺失源、结论边界；Markdown 报告同步增加「故障场景」段。
 - `DiagnosisService.build()` 支持 `manual_answers`，诊断页用「已有请求级 Trace」勾选项驱动 `trace_lookup`；场景动作会合并进下一步建议。
-- 单测：注册表加载、匹配、`blocked`、`partial`、`verified`、条件树、仓储过滤与诊断接入；全量测试 137 passed。
+- 2026-11-09 追加：直播进入房间失败场景 `live.enter_room_failure`（4 source /
+  5 signal / 5 step / 5 rule），`_record_get` 支持 `attributes.metric_value`
+  点路径取值，规则输出带真实 `evidence_ids`；新增
+  `MultiSourceQueryService` / `TroubleshootingService` / 「故障排查」页面。
+- 单测：注册表加载、匹配、`blocked`、`partial`、`verified`、条件树、仓储过滤、
+  直播场景嵌套指标取值、跨系统查询与五段排查链路；全量测试 144 passed。
 
 **阶段 1.5（下一轮本地闭环）**：
 - 把 `payment.result_mismatch` 的 E6003 退款咨询拆成独立场景，避免错误码命中跨界。

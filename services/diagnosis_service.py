@@ -167,6 +167,7 @@ class DiagnosisService:
         result["markdown"] = render_markdown(result)
         result["markdown_body"] = render_markdown(result, include_scenario=False)
         result["context_counts"] = context["counts"]
+        result["context"] = context
         return result
 
     def _run_scenario(

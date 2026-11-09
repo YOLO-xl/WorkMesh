@@ -58,6 +58,15 @@ MODULES = [
         "page": "单条诊断",
     },
     {
+        "key": "troubleshooting",
+        "name": "故障排查",
+        "icon": "stethoscope",
+        "group": "core",
+        "desc": "从反馈出发串起多系统查询、证据关联与场景判定。",
+        "tags": ["多系统查询", "证据链", "原始追溯"],
+        "page": "故障排查",
+    },
+    {
         "key": "analytics",
         "name": "反馈分析",
         "icon": "chart",
@@ -205,6 +214,7 @@ def _status_map(
         "evidence": f"证据库 <b>{evidence_total}</b> 条 · 3 类来源",
         "cluster": f"<b>{cluster_stats['cluster_count']}</b> 个问题簇 · 覆盖 {cluster_stats['coverage'] * 100:.0f}%",
         "diagnosis": "规则诊断可用" + ("" if llm_ready else " · LLM 未配置"),
+        "troubleshooting": "内置样例 F001 · 证据链可追溯",
         "analytics": f"<b>{overview['unique_users']}</b> 位用户 · {overview['unique_products']} 个产品",
         "reports": "规划中 · 暂无报告",
     }

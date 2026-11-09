@@ -1,0 +1,422 @@
+{
+  "schema_version": 1,
+  "id": "live.enter_room_failure",
+  "name": "进入直播间失败",
+  "version": "2026.11",
+  "owner": "feedback-platform",
+  "priority": 75,
+  "enabled": true,
+  "effective_from": "2026-11-01",
+  "tags": [
+    "直播",
+    "进入房间",
+    "加载",
+    "黑屏"
+  ],
+  "match": {
+    "products": [
+      "直播SDK"
+    ],
+    "error_codes": [
+      "E1001",
+      "E1002"
+    ],
+    "keywords_any": [
+      "进入直播间",
+      "加载",
+      "黑屏",
+      "转圈",
+      "无法播放"
+    ],
+    "symptoms_any": [
+      "一直加载",
+      "打开黑屏",
+      "加载失败"
+    ],
+    "features_any": [
+      "直播",
+      "房间"
+    ],
+    "exclude_keywords": [
+      "建议增加",
+      "希望支持"
+    ]
+  },
+  "sources": [
+    {
+      "id": "feedback_recent",
+      "kind": "feedback",
+      "required": true,
+      "window_minutes": 30,
+      "limit": 200,
+      "description": "同产品、同错误码的近期反馈",
+      "query": {
+        "products": [
+          "直播SDK"
+        ],
+        "error_codes": [
+          "E1001",
+          "E1002"
+        ],
+        "limit": 200
+      }
+    },
+    {
+      "id": "live_logs",
+      "kind": "evidence",
+      "required": true,
+      "window_minutes": 30,
+      "limit": 200,
+      "description": "直播SDK 同 UID 日志",
+      "query": {
+        "evidence_types": [
+          "log"
+        ],
+        "service": "直播SDK",
+        "uid": "{{anchor.uid}}",
+        "limit": 200
+      }
+    },
+    {
+      "id": "live_metrics_player",
+      "kind": "evidence",
+      "required": false,
+      "window_minutes": 30,
+      "limit": 50,
+      "description": "播放器初始化失败率",
+      "query": {
+        "evidence_types": [
+          "metric"
+        ],
+        "service": "直播SDK",
+        "titles": [
+          "live_player_init_fail_rate"
+        ],
+        "limit": 50
+      }
+    },
+    {
+      "id": "live_metrics_latency",
+      "kind": "evidence",
+      "required": false,
+      "window_minutes": 30,
+      "limit": 50,
+      "description": "进入房间 P99 耗时",
+      "query": {
+        "evidence_types": [
+          "metric"
+        ],
+        "service": "直播SDK",
+        "titles": [
+          "live_room_enter_p99_ms"
+        ],
+        "limit": 50
+      }
+    }
+  ],
+  "signals": [
+    {
+      "id": "recent_feedback_count",
+      "source": "feedback_recent",
+      "kind": "count"
+    },
+    {
+      "id": "live_log_count",
+      "source": "live_logs",
+      "kind": "count"
+    },
+    {
+      "id": "log_trace_count",
+      "source": "live_logs",
+      "kind": "distinct_count",
+      "field": "trace_id"
+    },
+    {
+      "id": "player_init_fail_rate",
+      "source": "live_metrics_player",
+      "kind": "max",
+      "field": "attributes.metric_value"
+    },
+    {
+      "id": "enter_latency_p99",
+      "source": "live_metrics_latency",
+      "kind": "max",
+      "field": "attributes.metric_value"
+    }
+  ],
+  "steps": [
+    {
+      "id": "confirm_scope",
+      "title": "确认反馈面",
+      "uses": [
+        "feedback_recent"
+      ],
+      "observe": "recent_feedback_count",
+      "criteria": {
+        "pass": {
+          "signal": "recent_feedback_count",
+          "op": "gte",
+          "value": 2
+        },
+        "fail": {
+          "signal": "recent_feedback_count",
+          "op": "lt",
+          "value": 2
+        }
+      },
+      "on_missing": "mark_unverified",
+      "guidance": "只有 1 条时先按个体问题处理；≥2 条再看是否面上扩散。"
+    },
+    {
+      "id": "collect_user_logs",
+      "title": "查同 UID 直播日志",
+      "uses": [
+        "live_logs"
+      ],
+      "observe": "live_log_count",
+      "criteria": {
+        "pass": {
+          "signal": "live_log_count",
+          "op": "gte",
+          "value": 1
+        },
+        "fail": {
+          "signal": "live_log_count",
+          "op": "eq",
+          "value": 0
+        }
+      },
+      "on_missing": "mark_unverified",
+      "guidance": "按 UID 拉取进入房间前后的日志，确认失败发生在推流、播放器初始化还是播放地址。"
+    },
+    {
+      "id": "confirm_trace",
+      "title": "确认链路标识",
+      "uses": [
+        "live_logs"
+      ],
+      "observe": "log_trace_count",
+      "criteria": {
+        "pass": {
+          "signal": "log_trace_count",
+          "op": "gte",
+          "value": 1
+        },
+        "fail": {
+          "signal": "log_trace_count",
+          "op": "eq",
+          "value": 0
+        }
+      },
+      "on_missing": "mark_unverified",
+      "guidance": "日志里没有 Trace 时，只能定位到服务方向，不能定位到具体请求。"
+    },
+    {
+      "id": "check_player_init",
+      "title": "核对播放器初始化失败率",
+      "uses": [
+        "live_metrics_player"
+      ],
+      "observe": "player_init_fail_rate",
+      "criteria": {
+        "pass": {
+          "signal": "player_init_fail_rate",
+          "op": "lt",
+          "value": 0.05
+        },
+        "fail": {
+          "signal": "player_init_fail_rate",
+          "op": "gte",
+          "value": 0.05
+        }
+      },
+      "on_missing": "mark_unverified",
+      "guidance": "失败率 ≥5% 时优先怀疑播放器初始化或推流地址；低于 5% 时回到个体网络/设备侧。"
+    },
+    {
+      "id": "check_enter_latency",
+      "title": "核对进入房间耗时",
+      "uses": [
+        "live_metrics_latency"
+      ],
+      "observe": "enter_latency_p99",
+      "criteria": {
+        "pass": {
+          "signal": "enter_latency_p99",
+          "op": "lt",
+          "value": 3000
+        },
+        "fail": {
+          "signal": "enter_latency_p99",
+          "op": "gte",
+          "value": 3000
+        }
+      },
+      "on_missing": "mark_unverified",
+      "guidance": "P99 ≥3s 时，进入房间链路已经明显超时，需要继续拆 CDN、推流、播放器三段。"
+    }
+  ],
+  "rules": [
+    {
+      "id": "uid_trace_chain",
+      "priority": 35,
+      "when": {
+        "all": [
+          {
+            "signal": "live_log_count",
+            "op": "gte",
+            "value": 1
+          },
+          {
+            "signal": "log_trace_count",
+            "op": "gte",
+            "value": 1
+          }
+        ]
+      },
+      "requires": [
+        "live_logs"
+      ],
+      "then": {
+        "type": "hypothesis",
+        "statement": "同一 UID 的进入房间请求已命中带 Trace 的直播日志，失败集中在推流连接与播放器初始化链路。",
+        "confidence": "medium",
+        "evidence_refs": [
+          "S:live_logs.live_log_count",
+          "S:live_logs.log_trace_count"
+        ]
+      },
+      "actions": [
+        "用日志中的 Trace ID 拉取完整链路，确认失败节点是推流、CDN 还是播放器",
+        "对比同 UID 的版本、网络与设备信息，排除个体环境差异"
+      ]
+    },
+    {
+      "id": "player_init_regression",
+      "priority": 30,
+      "when": {
+        "all": [
+          {
+            "signal": "player_init_fail_rate",
+            "op": "gte",
+            "value": 0.05
+          }
+        ]
+      },
+      "requires": [
+        "live_metrics_player"
+      ],
+      "then": {
+        "type": "hypothesis",
+        "statement": "播放器初始化失败率高于 5% 阈值，进入房间失败更像面上问题，而不是单个用户网络抖动。",
+        "confidence": "medium",
+        "evidence_refs": [
+          "S:live_metrics_player.player_init_fail_rate"
+        ]
+      },
+      "actions": [
+        "按版本/地区拆分播放器初始化失败率",
+        "核对最近一次直播 SDK 或播放器配置变更"
+      ]
+    },
+    {
+      "id": "enter_latency_regression",
+      "priority": 25,
+      "when": {
+        "all": [
+          {
+            "signal": "enter_latency_p99",
+            "op": "gte",
+            "value": 3000
+          }
+        ]
+      },
+      "requires": [
+        "live_metrics_latency"
+      ],
+      "then": {
+        "type": "hypothesis",
+        "statement": "进入房间 P99 耗时超过 3 秒，加载态可能与进入房间链路超时同时出现，需要拆分 CDN 与播放器耗时。",
+        "confidence": "medium",
+        "evidence_refs": [
+          "S:live_metrics_latency.enter_latency_p99"
+        ]
+      },
+      "actions": [
+        "拆分 CDN 首包、推流连接、播放器初始化三段耗时",
+        "核对同时间段 CDN 错误率与节点分布"
+      ]
+    },
+    {
+      "id": "scope_spread",
+      "priority": 20,
+      "when": {
+        "all": [
+          {
+            "signal": "recent_feedback_count",
+            "op": "gte",
+            "value": 2
+          },
+          {
+            "signal": "live_log_count",
+            "op": "gte",
+            "value": 1
+          }
+        ]
+      },
+      "requires": [
+        "feedback_recent",
+        "live_logs"
+      ],
+      "then": {
+        "type": "hypothesis",
+        "statement": "同一时间窗口内出现多条同错误码反馈，且能拉到同 UID 日志，暂按面上问题排查，不按单条个体问题关闭。",
+        "confidence": "medium",
+        "evidence_refs": [
+          "S:feedback_recent.recent_feedback_count",
+          "S:live_logs.live_log_count"
+        ]
+      },
+      "actions": [
+        "把同错误码反馈按版本、平台、地区分组，确认是否集中",
+        "观察 30 分钟内反馈量是否继续增长"
+      ]
+    },
+    {
+      "id": "no_logs",
+      "priority": 10,
+      "when": {
+        "all": [
+          {
+            "signal": "live_log_count",
+            "op": "is_null"
+          }
+        ]
+      },
+      "requires": [
+        "live_logs"
+      ],
+      "then": {
+        "type": "action",
+        "statement": "当前没有拉到同 UID 的直播日志，不能判断失败节点。",
+        "confidence": "low",
+        "evidence_refs": [
+          "S:feedback_recent.recent_feedback_count"
+        ]
+      },
+      "actions": [
+        "补充直播 SDK 日志接入或粘贴同 UID 日志",
+        "补请求级 Trace ID 后再继续排查"
+      ]
+    }
+  ],
+  "output_policy": {
+    "max_confidence_without_trace": "medium",
+    "forbid_root_cause": true,
+    "min_evidence_refs_for_hypothesis": 1,
+    "require_any_of_sources": [
+      "live_logs"
+    ],
+    "disclaimer": "当前结论只定位到直播 SDK 的进入房间链路方向；没有请求级 Trace 时，不能定位到具体代码行。"
+  }
+}

@@ -434,11 +434,13 @@ class EvidenceRepository:
         error_code: Optional[str] = None,
         trace_id: Optional[str] = None,
         request_id: Optional[str] = None,
+        titles: Optional[Iterable[str]] = None,
+        keyword: Optional[str] = None,
         start: Optional[str] = None,
         end: Optional[str] = None,
         limit: int = 200,
     ) -> list[Evidence]:
-        """按场景条件查询证据，供故障场景模型使用。"""
+        """按场景条件查询证据，供故障场景模型和多系统检索使用。"""
 
         conditions = ["workspace_id = ?"]
         parameters: list[Any] = [workspace_id]
@@ -465,6 +467,24 @@ class EvidenceRepository:
                 conditions.append(f"{name} = ?")
                 parameters.append(str(value))
 
+        title_values = [
+            str(item).strip() for item in (titles or []) if str(item).strip()
+        ]
+        if title_values:
+            conditions.append(
+                "title IN (" + ",".join("?" for _ in title_values) + ")"
+            )
+            parameters.extend(title_values)
+
+        if keyword:
+            keyword_like = f"%{str(keyword).strip()}%"
+            conditions.append(
+                "(message LIKE ? OR title LIKE ? OR error_code LIKE ? OR service LIKE ?)"
+            )
+            parameters.extend([
+                keyword_like, keyword_like, keyword_like, keyword_like
+            ])
+
         if start:
             conditions.append("timestamp >= ?")
             parameters.append(str(start))
@@ -488,6 +508,27 @@ class EvidenceRepository:
             ).fetchall()
 
         return [_row_to_evidence(row) for row in rows]
+
+    def get_source(
+        self,
+        workspace_id: str,
+        source_id: str,
+    ) -> Optional[dict]:
+        """读取证据数据源信息，供原始证据追溯展示来源。"""
+
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, name, source_type, connector_type, status
+                FROM data_sources
+                WHERE workspace_id = ?
+                  AND id = ?
+                LIMIT 1
+                """,
+                (workspace_id, source_id),
+            ).fetchone()
+
+        return dict(row) if row else None
 
     def count_evidence(
         self,

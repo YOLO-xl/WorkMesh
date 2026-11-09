@@ -82,6 +82,29 @@ ALLOWED_PLACEHOLDERS = {
 ROOT_CAUSE_WORDS = ("根因", "确定是", "必然", "一定是")
 
 
+def _record_get(record: Any, field: Optional[str], default: Any = None) -> Any:
+    """从 dict / Evidence / 嵌套 attributes 中读取字段。
+
+    场景配置里的 ``attributes.metric_value`` 这类点路径需要逐层解析，
+    否则 Evidence.to_dict() 之后只能取到整个 attributes 对象。
+    """
+
+    path = str(field or "value")
+    current: Any = record
+
+    for part in path.split("."):
+        if isinstance(current, dict):
+            if part not in current:
+                return default
+            current = current[part]
+        elif hasattr(current, part):
+            current = getattr(current, part)
+        else:
+            return default
+
+    return current
+
+
 # ----------------------------------------------------------------------
 # 校验
 # ----------------------------------------------------------------------
@@ -687,10 +710,14 @@ class ScenarioRunner:
         )
 
         evidence_refs = []
+        evidence_ids = []
         for item in facts + hypotheses:
             for ref in item.get("evidence_refs") or []:
                 if ref not in evidence_refs:
                     evidence_refs.append(ref)
+            for evidence_id in item.get("evidence_ids") or []:
+                if evidence_id not in evidence_ids:
+                    evidence_ids.append(evidence_id)
 
         return {
             "scenario_id": scenario["id"],
@@ -718,6 +745,7 @@ class ScenarioRunner:
             "confidence": confidence,
             "limits": limits,
             "evidence_refs": evidence_refs,
+            "evidence_ids": evidence_ids,
         }
 
     # ------------------------------------------------------------------
@@ -829,14 +857,23 @@ class ScenarioRunner:
             error_code=query.get("error_code"),
             trace_id=query.get("trace_id"),
             request_id=query.get("request_id"),
+            titles=_as_list(query.get("titles")),
+            keyword=query.get("keyword"),
             start=start,
             end=end,
             limit=source.get("limit") or query.get("limit") or 200,
         )
 
+        record_dicts = [item.to_dict() for item in records]
+
         return {
             "available": True,
-            "records": [item.to_dict() for item in records],
+            "records": record_dicts,
+            "evidence_ids": [
+                item["evidence_id"]
+                for item in record_dicts
+                if item.get("evidence_id")
+            ],
             "description": source.get("description") or source["id"],
             "reason": None,
         }
@@ -986,17 +1023,17 @@ class ScenarioRunner:
         if kind == "value":
             if not records:
                 return None
-            return records[0].get(field or "value")
+            return _record_get(records[0], field)
         if kind == "distinct_count":
             return len({
-                record.get(field)
+                _record_get(record, field)
                 for record in records
-                if record.get(field) not in (None, "")
+                if _record_get(record, field) not in (None, "")
             })
 
         numeric = []
         for record in records:
-            raw = record.get(field) if field else record.get("value")
+            raw = _record_get(record, field)
             try:
                 if raw is not None and raw != "":
                     numeric.append(float(raw))
@@ -1016,9 +1053,9 @@ class ScenarioRunner:
                 return None
             record = max(
                 records,
-                key=lambda item: str(item.get("timestamp") or ""),
+                key=lambda item: str(_record_get(item, "timestamp") or ""),
             )
-            return record.get(field) if field else record.get("value")
+            return _record_get(record, field)
 
         return None
 
@@ -1128,6 +1165,9 @@ class ScenarioRunner:
             facts.append({
                 "statement": f"{step['title']}：{step['observation']}",
                 "evidence_refs": refs,
+                "evidence_ids": self._refs_to_evidence_ids(
+                    refs, source_results
+                ),
                 "step_id": step["id"],
                 "status": step["status"],
             })
@@ -1146,10 +1186,14 @@ class ScenarioRunner:
                 continue
 
             then = rule.get("then") or {}
+            refs = list(then.get("evidence_refs") or [])
             item = {
                 "statement": str(then.get("statement") or ""),
                 "confidence": then.get("confidence") or "low",
-                "evidence_refs": list(then.get("evidence_refs") or []),
+                "evidence_refs": refs,
+                "evidence_ids": self._refs_to_evidence_ids(
+                    refs, source_results
+                ),
                 "rule_id": rule.get("id"),
             }
 
@@ -1175,6 +1219,28 @@ class ScenarioRunner:
             actions.extend(str(action) for action in rule.get("actions") or [])
 
         return facts, hypotheses, actions
+
+    @staticmethod
+    def _refs_to_evidence_ids(
+        refs: list[str],
+        source_results: dict[str, dict],
+    ) -> list[str]:
+        """把 S:<source>.<signal> 引用展开为可追溯的证据 ID。"""
+
+        evidence_ids: list[str] = []
+
+        for ref in refs:
+            if not str(ref).startswith("S:"):
+                continue
+
+            source_id = str(ref)[2:].split(".", 1)[0]
+            for evidence_id in (
+                source_results.get(source_id, {}).get("evidence_ids") or []
+            ):
+                if evidence_id not in evidence_ids:
+                    evidence_ids.append(evidence_id)
+
+        return evidence_ids
 
     # ------------------------------------------------------------------
     # 输出
