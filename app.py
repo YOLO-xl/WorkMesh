@@ -17,7 +17,8 @@ from database.migration import initialize_database
 from database.feedback_repository import FeedbackRepository
 from database.evidence_repository import EvidenceRepository
 from ui.theme import apply_theme, hero
-from ui.landing_page import render as render_landing_page
+from ui.landing_page import remember_visit, render as render_landing_page
+from ui.topbar import render as render_topbar
 from ui.analytics_page import render as render_analytics_page
 from ui.evidence_page import render as render_evidence_page
 from ui.cluster_page import render as render_cluster_page
@@ -108,13 +109,18 @@ elif requested_view == "home" and st.session_state.get("wm_deeplink") != "home":
 def go_to_page(page):
     st.session_state.page_navigation = page
     st.session_state.wm_view = "module"
-    st.session_state.wm_deeplink = None
+    st.session_state.wm_deeplink = page
+    st.query_params["page"] = page
+    st.query_params.pop("view", None)
+    remember_visit(page)
 
 
 def go_home():
     st.session_state.page_navigation = None
     st.session_state.wm_view = "landing"
-    st.session_state.wm_deeplink = None
+    st.session_state.wm_deeplink = "home"
+    st.query_params["view"] = "home"
+    st.query_params.pop("page", None)
 
 
 def enter_module():
@@ -123,18 +129,16 @@ def enter_module():
 
 st.sidebar.markdown(
     """
-    <div style="display:flex;align-items:center;gap:0.6rem;margin:0.2rem 0 0.1rem">
-        <span style="width:9px;height:9px;border-radius:50%;background:#22D3EE;
-                     box-shadow:0 0 10px #22D3EE;display:inline-block"></span>
-        <span style="font-size:1.35rem;font-weight:700;letter-spacing:0.08em;
-                     background:linear-gradient(92deg,#F8FAFC,#22D3EE);
-                     -webkit-background-clip:text;background-clip:text;color:transparent">
-            WorkMesh
+    <div class="wm-brand" style="margin:0.2rem 0 0.5rem">
+        <span class="wm-brand-mark" style="color:#FFFFFF">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                 stroke="currentColor" stroke-width="1.6" stroke-linecap="round"
+                 stroke-linejoin="round"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/></svg>
         </span>
-    </div>
-    <div style="color:#64748B;font-size:0.7rem;letter-spacing:0.16em;
-                text-transform:uppercase;margin-bottom:0.2rem">
-        Enterprise AI Workspace
+        <div>
+            <div class="wm-brand-name">WorkMesh</div>
+            <div class="wm-brand-sub">导航</div>
+        </div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -157,7 +161,23 @@ st.sidebar.radio(
 )
 
 st.sidebar.divider()
-st.sidebar.caption("v0.4.1-dev · 本地运行")
+st.sidebar.caption("v0.5.0-dev · 本地运行")
+
+current_label = (
+    "首页"
+    if st.session_state.wm_view == "landing"
+    else (st.session_state.page_navigation or PAGES[0])
+)
+
+topbar_records = feedback_repository.list_feedback(
+    feedback_repository.get_default_workspace(), page=1, page_size=4
+)["records"]
+
+render_topbar(
+    current_label,
+    topbar_records,
+    feedback_repository.get_default_workspace(),
+)
 
 
 # 首屏：独立的介绍层，不进入模块导航
