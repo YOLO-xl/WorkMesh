@@ -50,7 +50,8 @@ html, body, .stApp {
 }
 
 .block-container {
-    padding-top: 1.1rem;
+    /* 顶部留出 Streamlit 固定 header（Deploy / 菜单）的高度，否则内容会被压住 */
+    padding-top: 4.6rem;
     padding-bottom: 3.2rem;
     max-width: 1320px;
 }
@@ -117,6 +118,7 @@ div[class*="st-key-wm_topbar"] [data-testid="stTextInput"] input {
 
 div[class*="st-key-wm_topbar"] [data-testid="stPopover"] button {
     height: 2.1rem;
+    white-space: nowrap;
     min-height: 2.1rem;
     padding: 0 0.45rem;
     font-size: 0.76rem;

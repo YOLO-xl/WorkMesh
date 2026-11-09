@@ -38,7 +38,7 @@ def render(
 ) -> None:
     with st.container(key="wm_topbar"):
         brand_col, crumb_col, search_col, bell_col, help_col, user_col = st.columns(
-            [2.4, 2.2, 3.8, 0.7, 0.7, 0.9],
+            [1.9, 1.6, 3.2, 1.0, 1.0, 1.05],
             vertical_alignment="center",
         )
 
