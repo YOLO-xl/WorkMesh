@@ -41,6 +41,11 @@ MIGRATION_STEPS: tuple[MigrationStep, ...] = (
         description="诊断报告沉淀表",
         file_name="003_diagnosis_reports.sql",
     ),
+    MigrationStep(
+        version=4,
+        description="问题簇报告表",
+        file_name="004_cluster_reports.sql",
+    ),
 )
 
 CURRENT_VERSION = max(

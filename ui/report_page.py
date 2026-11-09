@@ -8,6 +8,7 @@ import streamlit as st
 
 from html import escape
 
+from database.cluster_report_repository import ClusterReportRepository
 from database.feedback_repository import FeedbackRepository
 from database.migration import initialize_database
 from database.report_repository import ReportRepository
@@ -78,27 +79,36 @@ def _safe_file_name(title: str) -> str:
 def render(db_path=None) -> None:
     hero(
         "报告中心",
-        "诊断结论沉淀成可检索、可导出的报告；LLM 接入在同一个页面配置，改完即生效",
-        ["Archive", "Traceable", "Configurable"],
+        "单条诊断与问题簇报告统一沉淀；可检索、可下载，LLM 接入在同一页配置",
+        ["Archive", "Batch", "Configurable"],
     )
 
     initialize_database(db_path)
     feedback_repository = FeedbackRepository(db_path)
     report_repository = ReportRepository(db_path)
+    cluster_report_repository = ClusterReportRepository(db_path)
     workspace_id = feedback_repository.get_default_workspace()
 
     stats = report_repository.stats(workspace_id)
+    cluster_stats = cluster_report_repository.stats(workspace_id)
+    total_reports = stats["total"] + cluster_stats["total"]
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("报告总数", stats["total"])
-    c2.metric("近 7 天新增", stats["recent_total"])
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("报告总数", total_reports)
+    c2.metric("近 7 天新增", stats["recent_total"] + cluster_stats["recent_total"])
     c3.metric("覆盖反馈", stats["covered_feedback"])
-    c4.metric("LLM 生成", stats["llm_total"])
+    c4.metric("簇报告", cluster_stats["total"])
+    c5.metric("LLM 生成", stats["llm_total"])
 
-    tab_reports, tab_llm = st.tabs(["诊断报告", "LLM 配置"])
+    tab_reports, tab_clusters, tab_llm = st.tabs(
+        ["诊断报告", "簇报告", "LLM 配置"]
+    )
 
     with tab_reports:
         _render_reports(report_repository, workspace_id)
+
+    with tab_clusters:
+        _render_cluster_reports(cluster_report_repository, workspace_id)
 
     with tab_llm:
         _render_llm_config()
@@ -206,6 +216,103 @@ def _render_reports(report_repository: ReportRepository, workspace_id: str) -> N
                         st.rerun()
                 else:
                     if st.button("删除", key=f"report_delete_{report['id']}"):
+                        st.session_state[pending_key] = report["id"]
+                        st.rerun()
+
+
+def _render_cluster_reports(
+    report_repository: ClusterReportRepository,
+    workspace_id: str,
+) -> None:
+    section(
+        "簇报告",
+        "从「问题聚类」对某个簇生成；含影响面、现象分布、抽样诊断与共性证据",
+    )
+
+    keyword = st.text_input(
+        "搜索簇报告",
+        placeholder="标题、产品、错误码或正文关键词",
+        key="cluster_report_keyword",
+        label_visibility="collapsed",
+    )
+
+    reports = report_repository.list_reports(
+        workspace_id,
+        keyword=keyword or None,
+        limit=100,
+    )
+
+    if not reports:
+        empty_state(
+            "还没有簇报告",
+            "到「问题聚类」展开一个簇，点「生成簇报告」；"
+            "报告会汇总影响面、现象分布，并抽样成员做单条诊断。",
+        )
+        return
+
+    st.caption(f"共 {len(reports)} 份簇报告")
+
+    for report in reports:
+        severity = SEVERITY_LABELS.get(report["severity"], report["severity"] or "—")
+        confidence = CONFIDENCE_LABELS.get(
+            report["confidence"], report["confidence"] or "—"
+        )
+        head = report["error_code"] or "无错误码"
+        label = (
+            f"{_fmt_time(report['created_at'])} · {report['product'] or '未知产品'}"
+            f" · {head} · {report['size']} 条反馈 · {report['title']}"
+        )
+
+        with st.expander(label):
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("反馈数", report["size"])
+            c2.metric("涉及用户", report["unique_users"])
+            c3.metric("关联证据", report["evidence_total"])
+            c4.metric("证据充分度", confidence)
+
+            st.caption(f"严重程度：{severity}｜生成方式：规则汇总")
+
+            st.markdown(report["markdown"])
+
+            download_col, delete_col = st.columns([3, 1])
+
+            with download_col:
+                st.download_button(
+                    "下载 Markdown",
+                    data=report["markdown"].encode("utf-8"),
+                    file_name=_safe_file_name(report["title"]),
+                    mime="text/markdown",
+                    key=f"cluster_report_download_{report['id']}",
+                )
+
+            with delete_col:
+                pending_key = "cluster_report_delete_pending"
+                is_pending = st.session_state.get(pending_key) == report["id"]
+
+                if is_pending:
+                    st.warning("确认删除这份簇报告？")
+
+                    if st.button(
+                        "确认删除",
+                        key=f"cluster_report_delete_confirm_{report['id']}",
+                        type="primary",
+                    ):
+                        report_repository.delete(report["id"])
+                        st.session_state.pop(pending_key, None)
+                        st.success("簇报告已删除。")
+                        st.rerun()
+
+                    if st.button(
+                        "取消",
+                        key=f"cluster_report_delete_cancel_{report['id']}",
+                    ):
+                        st.session_state.pop(pending_key, None)
+                        st.rerun()
+                else:
+                    if st.button(
+                        "删除",
+                        key=f"cluster_report_delete_{report['id']}",
+                    ):
                         st.session_state[pending_key] = report["id"]
                         st.rerun()
 

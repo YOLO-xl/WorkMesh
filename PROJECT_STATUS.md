@@ -29,7 +29,7 @@ v0.6.0-dev
 - [x] 证据关联引擎（core/correlation.py）
 - [x] 证据表与关联表（Schema v2 Migration）
 - [x] EvidenceRepository 数据访问层
-- [x] 版本化 Migration 框架（v1 → v3 可增量升级）
+- [x] 版本化 Migration 框架（v1 → v4 可增量升级）
 - [x] 证据接入：本地 JSON / JSONL / CSV、Elasticsearch 日志
 - [x] 问题上下文生成：已验证事实 / 待验证假设分离
 - [x] 「证据关联」页面
@@ -37,7 +37,7 @@ v0.6.0-dev
 
 ## 已完成（数据与平台能力）
 - [x] SQLite 连接层（database/connection.py，支持 WORKMESH_DB_PATH 覆盖库路径）
-- [x] 版本化 Migration（v1 → v3）：证据表 / 关联表 / 诊断报告表
+- [x] 版本化 Migration（v1 → v4）：证据表 / 关联表 / 诊断报告表 / 簇报告表
 - [x] FeedbackRepository / EvidenceRepository 数据访问层
 - [x] 数据持久化与字段标准化
 - [x] 导入批次管理与重复文件检测
@@ -48,10 +48,11 @@ v0.6.0-dev
 - [x] 反馈全景：现象分布、功能提及分布与按现象下钻
 - [x] 规则诊断 + 可选 LLM 诊断（引用校验，未配置 LLM 时自动退回规则）
 - [x] 诊断报告中心：归档 / 检索 / 下载 / 删除，内容 hash 去重
+- [x] 问题簇报告：整簇影响面 / 现象分布 / 抽样诊断 / 共性证据，报告中心统一检索
 - [x] LLM 配置双通道（环境变量优先 / 本机文件兜底）、连接测试与清除
 - [x] 主流服务商预设与模型选择（OpenAI / DeepSeek / 通义 / Kimi / 智谱 / SiliconFlow / Ollama / 自定义）
 - [x] GitHub 仓库公开并持续推送（暂无版本 tag / release）
-- [x] 自动化测试 104 项
+- [x] 自动化测试 109 项
 
 ## 进行中
 - [ ] 真实 Elasticsearch / Prometheus 实例联调（本机暂无可访问环境）
@@ -60,7 +61,7 @@ v0.6.0-dev
 ## 待完成
 - [ ] 后台导入任务与分块文件解析（当前整文件读入内存）
 - [ ] Jaeger / Tempo 链路追踪连接器
-- [ ] 分析报告沉淀扩展到跨反馈、跨问题簇的周期性报告（当前为单条诊断归档）
+- [ ] 分析报告沉淀扩展到跨反馈、跨问题簇的周期性报告（当前为单条诊断归档 + 单簇快照）
 - [ ] 聚类结果人工合并 / 拆分并写回标签
 - [ ] 按产品 + 7 天时间窗分块，支撑万级反馈增量归簇
 - [ ] embedding / 语义聚类增强

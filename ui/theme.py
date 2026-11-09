@@ -337,17 +337,32 @@ div[class*="st-key-wm_welcome"]::after {
 }
 
 .wm-section-title {
+    flex: 0 0 auto;
     font-size: 0.98rem;
     font-weight: 620;
     color: #EDF2FB;
     letter-spacing: 0.01em;
     margin: 0;
+    white-space: nowrap;
 }
 
 .wm-section-desc {
+    flex: 1 1 auto;
     color: var(--wm-faint);
     font-size: 0.78rem;
     margin: 0;
+    text-align: right;
+}
+
+@media (max-width: 640px) {
+    .wm-section {
+        display: block;
+    }
+
+    .wm-section-desc {
+        margin-top: 0.3rem;
+        text-align: left;
+    }
 }
 
 .wm-group-label {

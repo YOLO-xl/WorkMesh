@@ -4,7 +4,9 @@ import pandas as pd
 import streamlit as st
 from html import escape
 
+from database.cluster_report_repository import ClusterReportRepository
 from database.feedback_repository import FeedbackRepository
+from services.cluster_report_service import ClusterReportService
 from services.cluster_service import (
     ClusterService,
     DEFAULT_MIN_SIZE,
@@ -208,7 +210,7 @@ def _render_detail(cluster: dict, workspace_id: str, db_path) -> None:
     )
 
     representative = cluster["representative"]
-    action_col, download_col, note_col = st.columns([1.2, 1.2, 2])
+    action_col, report_col, download_col, note_col = st.columns([1.2, 1.2, 1.2, 2])
 
     with action_col:
         st.button(
@@ -219,6 +221,26 @@ def _render_detail(cluster: dict, workspace_id: str, db_path) -> None:
             on_click=_goto_diagnosis,
             args=(representative["id"],),
         )
+
+    with report_col:
+        if st.button(
+            "生成簇报告",
+            key=f"cluster_report_{cluster['cluster_id']}",
+            type="primary",
+            use_container_width=True,
+        ):
+            with st.spinner("汇总簇内反馈，并抽样成员做诊断…"):
+                report_result = ClusterReportService(db_path=db_path).build(
+                    workspace_id, cluster
+                )
+                _, created = ClusterReportRepository(db_path).save(
+                    workspace_id, cluster, report_result
+                )
+            st.success(
+                "簇报告已归档到报告中心 →「簇报告」。"
+                if created
+                else "这个簇已经生成过相同内容的报告，未重复归档。"
+            )
 
     with download_col:
         export_df = pd.DataFrame(
@@ -246,7 +268,8 @@ def _render_detail(cluster: dict, workspace_id: str, db_path) -> None:
     with note_col:
         st.caption(
             "簇是「看起来同一批问题」，不是故障结论；"
-            "点代表反馈进入单条诊断，才会按标识与时间窗口算证据。"
+            "簇报告会抽样 3 条成员做单条诊断，再汇总影响面与共性证据；"
+            "点代表反馈进入单条诊断可查看完整证据引用。"
         )
 
     if cluster["evidence"]["total"] == 0:
