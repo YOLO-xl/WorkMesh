@@ -17,7 +17,7 @@ from database.migration import initialize_database
 from database.feedback_repository import FeedbackRepository
 from database.evidence_repository import EvidenceRepository
 from ui.theme import apply_theme, hero
-from ui.overview_page import render as render_overview_page
+from ui.landing_page import render as render_landing_page
 from ui.analytics_page import render as render_analytics_page
 from ui.evidence_page import render as render_evidence_page
 from ui.cluster_page import render as render_cluster_page
@@ -71,8 +71,8 @@ st.set_page_config(
 
 apply_theme()
 
+# 首屏与功能模块是两层：首屏不参与侧边栏导航。
 PAGES = [
-    "系统概览",
     "数据接入",
     "证据关联",
     "问题聚类",
@@ -81,23 +81,44 @@ PAGES = [
     "报告中心",
 ]
 
-if "page_navigation" not in st.session_state:
-    st.session_state.page_navigation = "系统概览"
+if "wm_view" not in st.session_state:
+    st.session_state.wm_view = "landing"
 
-# 支持 ?page=问题聚类 这类深链接，方便把某个页面直接发给同事。
+if "page_navigation" not in st.session_state:
+    st.session_state.page_navigation = None
+
+# 深链接：?page=问题聚类 直接进模块，?view=home 回首屏。
 requested_page = st.query_params.get("page")
+requested_view = st.query_params.get("view")
 
 if (
-    requested_page
-    and requested_page in PAGES
+    requested_page in PAGES
     and st.session_state.get("wm_deeplink") != requested_page
 ):
     st.session_state.page_navigation = requested_page
+    st.session_state.wm_view = "module"
     st.session_state.wm_deeplink = requested_page
+
+elif requested_view == "home" and st.session_state.get("wm_deeplink") != "home":
+    st.session_state.page_navigation = None
+    st.session_state.wm_view = "landing"
+    st.session_state.wm_deeplink = "home"
 
 
 def go_to_page(page):
     st.session_state.page_navigation = page
+    st.session_state.wm_view = "module"
+    st.session_state.wm_deeplink = None
+
+
+def go_home():
+    st.session_state.page_navigation = None
+    st.session_state.wm_view = "landing"
+    st.session_state.wm_deeplink = None
+
+
+def enter_module():
+    st.session_state.wm_view = "module"
 
 
 st.sidebar.markdown(
@@ -120,32 +141,40 @@ st.sidebar.markdown(
 )
 st.sidebar.divider()
 
-page = st.sidebar.radio(
-    "工作空间",
+if st.session_state.wm_view == "module":
+    st.sidebar.button(
+        "← 返回首页",
+        on_click=go_home,
+        use_container_width=True,
+    )
+
+st.sidebar.radio(
+    "模块",
     PAGES,
+    index=None,
     key="page_navigation",
+    on_change=enter_module,
 )
 
 st.sidebar.divider()
-
-if page in ("数据接入", "证据关联"):
-    st.sidebar.caption("STEP 01-02 · 先有数据，再有证据")
-    st.sidebar.caption("先导入反馈，再接入日志 / 指标")
-else:
-    st.sidebar.caption("v0.4.0-dev · 本地运行")
+st.sidebar.caption("v0.4.1-dev · 本地运行")
 
 
-# 系统概览
-if page == "系统概览":
-    render_overview_page(
+# 首屏：独立的介绍层，不进入模块导航
+if st.session_state.wm_view == "landing":
+    render_landing_page(
         feedback_repository,
         evidence_repository,
         feedback_repository.get_default_workspace(),
     )
+    st.stop()
+
+
+page = st.session_state.page_navigation or PAGES[0]
 
 
 # 数据接入
-elif page == "数据接入":
+if page == "数据接入":
     hero(
         "数据接入",
         "导入企业反馈数据，自动识别字段并转换为 WorkMesh 统一格式",
