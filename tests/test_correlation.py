@@ -36,6 +36,51 @@ def make_log(**overrides):
     return Evidence.from_dict(data)
 
 
+def make_metric(**overrides):
+    data = {
+        "evidence_type": "metric",
+        "record_id": "metric-001",
+        "timestamp": "2026-11-01T09:16:00Z",
+        "service": "直播SDK",
+        "title": "live_player_init_fail_rate",
+        "message": "live_player_init_fail_rate = 0.182（job=live-sdk）",
+    }
+    data.update(overrides)
+    return Evidence.from_dict(data)
+
+
+def test_metric_in_service_window_becomes_context_evidence():
+    anchor = make_feedback()
+    result = score_pair(anchor, make_metric())
+
+    assert result is not None
+    assert result.relation == "context"
+    assert result.strength == "weak"
+    assert "service" in result.matched_keys
+    assert any("不单独构成故障归因" in reason for reason in result.reasons)
+
+
+def test_metric_outside_window_is_not_correlated():
+    anchor = make_feedback()
+    candidate = make_metric(timestamp="2026-11-01T12:30:00Z")
+
+    assert score_pair(anchor, candidate) is None
+
+
+def test_metric_for_other_service_is_not_correlated():
+    anchor = make_feedback()
+    candidate = make_metric(service="其他服务")
+
+    assert score_pair(anchor, candidate) is None
+
+
+def test_service_window_alone_still_rejects_log():
+    anchor = make_feedback()
+    candidate = make_log(uid=None, error_code=None)
+
+    assert score_pair(anchor, candidate) is None
+
+
 def test_trace_id_match_is_strong_even_outside_window():
     anchor = make_feedback(trace_id="trace-001")
     candidate = make_log(

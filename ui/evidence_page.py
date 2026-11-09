@@ -14,15 +14,21 @@ import pandas as pd
 import streamlit as st
 
 from connectors import connector_registry
+from connectors.metrics.prometheus import PrometheusConnector, PrometheusError
 from core.correlation import DEFAULT_MIN_SCORE, DEFAULT_WINDOW_MINUTES
 from database.evidence_repository import EvidenceRepository
 from database.feedback_repository import FeedbackRepository
 from database.migration import initialize_database
 from services.evidence_service import TYPE_LABELS, EvidenceService
+from ui.theme import hero
 
 
 SAMPLE_LOG_PATH = (
     Path(__file__).resolve().parent.parent / "data" / "sample" / "log_sample.jsonl"
+)
+
+SAMPLE_PROMETHEUS_PATH = (
+    Path(__file__).resolve().parent.parent / "data" / "sample" / "prometheus_sample.json"
 )
 
 EVIDENCE_COLUMNS = [
@@ -33,6 +39,7 @@ EVIDENCE_COLUMNS = [
     "错误码",
     "分数",
     "强度",
+    "关系",
     "命中键",
     "内容",
 ]
@@ -114,6 +121,12 @@ def _format_matches(matches: list[dict]) -> pd.DataFrame:
                 "medium": "参考",
                 "weak": "弱关联",
             }.get(item["strength"], item["strength"]),
+            "关系": {
+                "correlates": "关联",
+                "context": "上下文",
+                "supports": "佐证",
+                "contradicts": "反证",
+            }.get(item.get("relation", "correlates"), item.get("relation")),
             "命中键": "、".join(item["matched_keys"]),
             "内容": evidence.display_label(),
         })
@@ -133,7 +146,7 @@ def _render_ingest(service: EvidenceService, workspace_id: str) -> None:
 
     mode = st.radio(
         "接入方式",
-        ["本地证据文件", "Elasticsearch 日志"],
+        ["本地证据文件", "Elasticsearch 日志", "Prometheus 指标"],
         horizontal=True,
         key="evidence_ingest_mode",
     )
@@ -219,7 +232,7 @@ def _render_ingest(service: EvidenceService, workspace_id: str) -> None:
                     use_container_width=True,
                 )
 
-    else:
+    elif mode == "Elasticsearch 日志":
         st.write("查询范围为只读，连接信息仅保存在当前会话中。")
 
         with st.form("es_evidence_form"):
@@ -286,6 +299,128 @@ def _render_ingest(service: EvidenceService, workspace_id: str) -> None:
                     )
             except Exception as exc:
                 st.error(f"Elasticsearch 查询失败：{exc}")
+
+
+    else:
+        st.write(
+            "Prometheus 只读查询：先测试连接，再执行 PromQL 并写入 metric 证据。"
+            "指标没有用户标识，会按「同服务 + 同时间窗口」作为上下文证据参与关联。"
+        )
+
+        with st.form("prometheus_form"):
+            base_url = st.text_input(
+                "Prometheus 地址", "http://localhost:9090"
+            )
+            promql = st.text_input(
+                "PromQL",
+                "sum(live_player_init_fail_rate)",
+            )
+            bearer_token = st.text_input(
+                "Bearer Token（可选）", type="password"
+            )
+            username = st.text_input("用户名（可选）")
+            password = st.text_input("密码（可选）", type="password")
+
+            col1, col2 = st.columns(2)
+            test_submitted = col1.form_submit_button("测试连接")
+            query_submitted = col2.form_submit_button(
+                "执行查询并接入", type="primary"
+            )
+
+        if test_submitted or query_submitted:
+            config = {"base_url": base_url}
+
+            if bearer_token:
+                config["bearer_token"] = bearer_token
+            elif username:
+                config["username"] = username
+                config["password"] = password
+
+            try:
+                connector = connector_registry.create(
+                    "prometheus", config
+                )
+                test = connector.test_connection()
+
+                if not test["success"]:
+                    st.error(test["message"])
+                else:
+                    st.success(
+                        f"连接成功：Prometheus v{test.get('version') or '—'}"
+                    )
+
+                    if query_submitted:
+                        points = connector.query(query=promql)
+
+                        if not points:
+                            st.warning(
+                                "查询没有返回数据，请检查 PromQL 或时间范围。"
+                            )
+                        else:
+                            normalized = connector.normalize(points)
+                            result = service.ingest_connector_records(
+                                workspace_id,
+                                normalized,
+                                source_name=f"Prometheus：{base_url}",
+                                source_type="metric",
+                                connector_type="prometheus",
+                            )
+                            st.session_state["evidence_ingest_result"] = result
+                            st.info(
+                                f"查询 {len(points)} 个点位，写入 "
+                                f"{result['inserted']} 条，跳过 "
+                                f"{result['skipped']} 条。"
+                            )
+
+            except (PrometheusError, ValueError) as exc:
+                st.error(f"Prometheus 查询失败：{exc}")
+
+        st.divider()
+        st.caption(
+            "没有可访问的 Prometheus 时，可用内置指标样例体验 metric 证据。"
+        )
+
+        if st.button(
+            "接入内置指标样例",
+            use_container_width=True,
+            help="data/sample/prometheus_sample.json，离线体验指标上下文证据",
+        ):
+            payload = _read_sample_prometheus()
+
+            if not payload:
+                st.error(
+                    "未找到内置指标样例 data/sample/prometheus_sample.json"
+                )
+            else:
+                try:
+                    connector = PrometheusConnector(
+                        {"base_url": "http://demo"}
+                    )
+                    points = connector.parse_response(payload)
+                    normalized = connector.normalize(points)
+                    result = service.ingest_connector_records(
+                        workspace_id,
+                        normalized,
+                        source_name="内置指标样例",
+                        source_type="metric",
+                        connector_type="prometheus",
+                    )
+                    st.session_state["evidence_ingest_result"] = result
+                    st.success(
+                        f"内置指标样例：写入 {result['inserted']} 条，"
+                        f"跳过 {result['skipped']} 条。"
+                    )
+                except (PrometheusError, ValueError) as exc:
+                    st.error(f"内置样例接入失败：{exc}")
+
+
+def _read_sample_prometheus(
+    path: Path = SAMPLE_PROMETHEUS_PATH,
+) -> dict:
+    if not path.exists():
+        return {}
+
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _render_context(service: EvidenceService, workspace_id: str) -> None:
@@ -375,11 +510,12 @@ def _render_context_result(context: dict) -> None:
 
     counts = context["counts"]
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("候选证据", counts["candidates"])
     c2.metric("关联证据", counts["matched"])
     c3.metric("强关联", counts["strong"])
-    c4.metric("其他反馈", counts["related_feedback"])
+    c4.metric("上下文证据", counts.get("context", 0))
+    c5.metric("其他反馈", counts["related_feedback"])
 
     st.info(context["summary"])
 
@@ -483,12 +619,12 @@ def _render_saved_links(service: EvidenceService, workspace_id: str) -> None:
 def render(db_path=None) -> None:
     """渲染证据关联页面。"""
 
-    st.title("证据关联")
-    st.caption(
-        "把用户反馈和日志、其他反馈放在同一条时间线上，"
-        "给出可解释的关联结果，并区分已验证事实与待验证假设。"
+    hero(
+        "证据关联",
+        "把用户反馈、日志、指标放回同一条时间线，"
+        "输出可解释的关联结果，并区分已验证事实与待验证假设",
+        ["Evidence Ingest", "Explainable Scoring", "Time Window"],
     )
-    st.divider()
 
     service = _build_service(db_path)
     workspace_id = service.feedback_repository.get_default_workspace()

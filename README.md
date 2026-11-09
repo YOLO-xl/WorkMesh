@@ -61,6 +61,12 @@ streamlit run app.py
 pytest -q
 ```
 
+配置可选能力（LLM 诊断 / 外部数据源）：
+
+```bash
+cp .env.example .env   # 填入 OPENAI_API_KEY、OPENAI_BASE_URL 等
+```
+
 ## 快速体验证据关联
 
 1. 启动工作台，进入「数据接入」，导入 `data/sample/feedback_sample.csv`。
@@ -70,8 +76,22 @@ pytest -q
    时间窗口 30 分钟，生成上下文。
 4. 预期结果：候选证据 5 条、强关联日志 2 条、同 UID 的其他反馈 1 条，
    事实区显示 UID / 错误码 / 服务一致项。
+5. 可选：在同一页切到「Prometheus 指标」，点「接入内置指标样例」
+   （`data/sample/prometheus_sample.json`），再生成上下文，
+   会多出 4 条指标「上下文证据」，总关联 6 条。
 
-设计说明见 `docs/EVIDENCE_MODEL.md`。
+## 快速体验智能诊断
+
+1. 进入「智能诊断」，选择反馈 `F001`，窗口 30 分钟。
+2. 点「生成诊断」，得到带证据引用的报告：
+   事实区只写字段一致项，其余全部标为推断，每条结论附依据。
+3. 未配置 LLM 时使用规则诊断；配置 `OPENAI_API_KEY` /
+   `OPENAI_BASE_URL` / `OPENAI_MODEL` 后勾选即可用模型润色，
+   但引用不存在的证据会被打回并退回规则诊断。
+4. 报告可下载为 Markdown。
+
+设计说明见 `docs/EVIDENCE_MODEL.md`，诊断口径见
+`services/diagnosis_service.py` 顶部注释。
 
 ## 设计原则
 

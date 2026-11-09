@@ -176,6 +176,7 @@ class EvidenceService:
                     "evidence_id": result.evidence.evidence_id,
                     "score": result.score,
                     "strength": result.strength,
+                    "relation": result.relation,
                     "matched_keys": result.matched_keys,
                     "reasons": result.reasons,
                 }
@@ -188,6 +189,7 @@ class EvidenceService:
                 anchor_type="feedback",
                 anchor_id=feedback_id,
                 links=persisted_links,
+                relation=None,
             )
 
         facts = self._build_facts(anchor, results)
@@ -209,6 +211,7 @@ class EvidenceService:
                 "matched": len(results),
                 "strong": sum(1 for item in results if item.strength == "strong"),
                 "medium": sum(1 for item in results if item.strength == "medium"),
+                "context": sum(1 for item in results if item.relation == "context"),
                 "persisted": sum(1 for item in matches if item["persisted"]),
             },
             "summary": self._build_summary(anchor, results, len(candidates)),
@@ -234,7 +237,7 @@ class EvidenceService:
             hits = [
                 result
                 for result in results
-                if key in result.matched_keys
+                if key in result.matched_keys and result.relation != "context"
             ]
 
             if not hits:
@@ -353,10 +356,15 @@ class EvidenceService:
             )
 
         strong = sum(1 for item in results if item.strength == "strong")
+        context_count = sum(1 for item in results if item.relation == "context")
         top = results[0]
 
+        scope = f"共找到 {len(results)} 条关联证据，其中强关联 {strong} 条"
+        if context_count:
+            scope = f"{scope}、上下文证据 {context_count} 条"
+
         return (
-            f"共找到 {len(results)} 条关联证据，其中强关联 {strong} 条；"
+            f"{scope}；"
             f"最高分 {top.score} 分，来自 "
             f"{TYPE_LABELS.get(top.evidence.evidence_type, top.evidence.evidence_type)}"
             f"（{top.evidence.display_label()[:60]}）。"

@@ -30,6 +30,10 @@ DEFAULT_MIN_SCORE = 30.0
 # 只有这些键命中，才允许产生关联。
 IDENTITY_KEYS = ("trace_id", "request_id", "uid")
 
+# 指标、变更、备注这类证据通常没有用户标识，
+# 与锚点同服务、同时间窗口时按「上下文证据」收录，明确不构成归因。
+CONTEXT_EVIDENCE_TYPES = ("metric", "change", "note")
+
 
 def _strength(matched_keys: list[str]) -> str:
     """按命中键判定关联强度。
@@ -63,6 +67,8 @@ class CorrelationWeights:
     error_code: float = 20.0
     service: float = 10.0
     time_proximity: float = 10.0
+    # 上下文证据（指标/变更/备注）的基准分，保证同服务同窗口即可入选。
+    context: float = 15.0
 
 
 @dataclass
@@ -75,6 +81,7 @@ class CorrelationResult:
     reasons: list[str] = field(default_factory=list)
     strength: str = "weak"
     time_delta_seconds: Optional[float] = None
+    relation: str = "correlates"
 
     def to_dict(self) -> dict:
         return {
@@ -84,6 +91,7 @@ class CorrelationResult:
             "reasons": self.reasons,
             "strength": self.strength,
             "time_delta_seconds": self.time_delta_seconds,
+            "relation": self.relation,
         }
 
 
@@ -196,8 +204,27 @@ def score_pair(
 
     # 必须至少有一个真正的身份标识，时间接近不能单独成立。
     has_identity = any(key in matched_keys for key in IDENTITY_KEYS)
+
+    relation = "correlates"
+    strength = _strength(matched_keys) if has_identity else "weak"
+
     if not has_identity:
-        return None
+        # 指标/变更/备注没有用户标识，同服务且同窗口时作为上下文证据，
+        # 这是「相关线索」而不是「同一问题的证据」，因此不参与事实判定。
+        is_context = (
+            candidate.evidence_type in CONTEXT_EVIDENCE_TYPES
+            and in_window
+            and "service" in matched_keys
+        )
+
+        if not is_context:
+            return None
+
+        relation = "context"
+        score += weights.context
+        reasons.append(
+            "仅为同服务、同时间窗口的上下文证据，不单独构成故障归因"
+        )
 
     score = round(min(score, 100.0), 1)
 
@@ -206,8 +233,9 @@ def score_pair(
         score=score,
         matched_keys=matched_keys,
         reasons=reasons,
-        strength=_strength(matched_keys),
+        strength=strength,
         time_delta_seconds=delta,
+        relation=relation,
     )
 
 

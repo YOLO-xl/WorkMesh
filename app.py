@@ -1,5 +1,8 @@
 import streamlit as st
 import pandas as pd
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from services.data_import_service import (
     read_uploaded_file,
@@ -12,12 +15,18 @@ from services.data_import_service import (
 
 from database.migration import initialize_database
 from database.feedback_repository import FeedbackRepository
+from database.evidence_repository import EvidenceRepository
+from ui.theme import apply_theme, hero
+from ui.home_page import render as render_home_page
+from ui.analytics_page import render as render_analytics_page
 from ui.evidence_page import render as render_evidence_page
+from ui.diagnosis_page import render as render_diagnosis_page
 
 
 # 初始化数据库并创建 Repository
 initialize_database()
 feedback_repository = FeedbackRepository()
+evidence_repository = EvidenceRepository()
 
 
 def build_import_records(raw_df, standard_df, mapping):
@@ -59,6 +68,8 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+apply_theme()
+
 if "page_navigation" not in st.session_state:
     st.session_state.page_navigation = "工作台首页"
 
@@ -66,84 +77,56 @@ def go_to_page(page):
     st.session_state.page_navigation = page
 
 
-st.sidebar.title("WorkMesh")
-st.sidebar.caption("Enterprise AI Workspace")
+st.sidebar.markdown(
+    """
+    <div style="display:flex;align-items:center;gap:0.6rem;margin:0.2rem 0 0.1rem">
+        <span style="width:9px;height:9px;border-radius:50%;background:#22D3EE;
+                     box-shadow:0 0 10px #22D3EE;display:inline-block"></span>
+        <span style="font-size:1.35rem;font-weight:700;letter-spacing:0.08em;
+                     background:linear-gradient(92deg,#F8FAFC,#22D3EE);
+                     -webkit-background-clip:text;background-clip:text;color:transparent">
+            WorkMesh
+        </span>
+    </div>
+    <div style="color:#64748B;font-size:0.7rem;letter-spacing:0.16em;
+                text-transform:uppercase;margin-bottom:0.2rem">
+        Enterprise AI Workspace
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 st.sidebar.divider()
 
 page = st.sidebar.radio(
     "工作空间",
-    ["工作台首页", "数据接入", "证据关联", "反馈分析", "AI 分析", "报告中心"],
+    [
+        "工作台首页",
+        "数据接入",
+        "证据关联",
+        "反馈分析",
+        "智能诊断",
+        "报告中心",
+    ],
     key="page_navigation",
 )
+
+st.sidebar.divider()
+st.sidebar.caption("v0.3.0-dev · 本地运行")
 
 
 # 首页
 if page == "工作台首页":
-    st.title("WorkMesh")
-    st.caption("Connect Everything. Work Smarter.")
-    st.write("企业多来源信息的 AI 分析工作台")
-    st.divider()
-
-    st.subheader("数据概览")
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("反馈总量", "—")
-    col2.metric("问题类别", "—")
-    col3.metric("待处理问题", "—")
-    col4.metric("数据来源", "0")
-
-    st.divider()
-    st.subheader("工作空间")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        with st.container(border=True):
-            st.subheader("数据接入")
-            st.write("导入 Excel、CSV 或连接企业业务系统。")
-            st.button(
-                "进入数据接入",
-                use_container_width=True,
-                on_click=go_to_page,
-                args=("数据接入",),
-            )
-
-        with st.container(border=True):
-            st.subheader("反馈分析")
-            st.write("识别高频问题、版本异常和反馈趋势。")
-            st.button(
-                "进入反馈分析",
-                use_container_width=True,
-                on_click=go_to_page,
-                args=("反馈分析",),
-            )
-
-    with col2:
-        with st.container(border=True):
-            st.subheader("AI 分析")
-            st.write("基于业务数据生成分析结论和排查建议。")
-            st.button(
-                "进入 AI 分析",
-                use_container_width=True,
-                on_click=go_to_page,
-                args=("AI 分析",),
-            )
-
-        with st.container(border=True):
-            st.subheader("报告中心")
-            st.write("查看和管理自动生成的分析报告。")
-            st.button(
-                "进入报告中心",
-                use_container_width=True,
-                on_click=go_to_page,
-                args=("报告中心",),
-            )
+    render_home_page(feedback_repository, evidence_repository, feedback_repository.get_default_workspace())
 
 
 # 数据接入
 elif page == "数据接入":
-    st.title("数据接入")
-    st.caption("导入企业反馈数据，并转换为 WorkMesh 统一数据格式。")
-    st.divider()
+    hero(
+        "数据接入",
+        "导入企业反馈数据，自动识别字段并转换为 WorkMesh 统一格式",
+        ["CSV / Excel", "Field Mapping", "Quality Gate"],
+    )
+    st.write("")
 
     uploaded_file = st.file_uploader(
         "上传反馈数据",
@@ -427,10 +410,24 @@ elif page == "证据关联":
     render_evidence_page()
 
 
+# 反馈分析
+elif page == "反馈分析":
+    render_analytics_page(feedback_repository, feedback_repository.get_default_workspace())
+
+
+# 智能诊断
+elif page == "智能诊断":
+    render_diagnosis_page()
+
+
 # 其他模块
 else:
-    st.title(page)
-    st.info("该模块正在开发中，后续版本开放。")
+    hero(
+        page,
+        "该模块正在开发中，后续版本开放",
+        ["Coming Soon"],
+    )
+    st.write("")
     st.button(
         "返回工作台首页",
         on_click=go_to_page,

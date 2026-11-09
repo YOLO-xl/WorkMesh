@@ -1,7 +1,7 @@
 # WorkMesh 开发进度
 
 ## 当前版本
-v0.2.0-dev
+v0.3.0-dev
 
 ## 项目定位
 面向企业多来源信息的 AI 分析工作台。
@@ -24,7 +24,7 @@ v0.2.0-dev
 - [x] 整体架构文档初稿
 - [x] 性能设计文档初稿
 
-## 已完成的证据能力（v0.2.0-dev）
+## 已完成的证据能力（v0.3.0-dev）
 - [x] 统一 Evidence 证据模型（core/evidence.py）
 - [x] 证据关联引擎（core/correlation.py）
 - [x] 证据表与关联表（Schema v2 Migration）

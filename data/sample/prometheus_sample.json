@@ -1,0 +1,55 @@
+{
+  "status": "success",
+  "data": {
+    "resultType": "vector",
+    "result": [
+      {
+        "metric": {
+          "__name__": "live_player_init_fail_rate",
+          "service": "直播SDK",
+          "job": "live-sdk",
+          "version": "8.6.2"
+        },
+        "value": [
+          1793524560.0,
+          "0.182"
+        ]
+      },
+      {
+        "metric": {
+          "__name__": "live_rtmp_connect_timeout_total",
+          "service": "直播SDK",
+          "job": "live-sdk",
+          "region": "cn-north"
+        },
+        "value": [
+          1793524560.0,
+          "37"
+        ]
+      },
+      {
+        "metric": {
+          "__name__": "live_cdn_error_rate",
+          "service": "直播SDK",
+          "job": "live-sdk",
+          "cdn": "vendor-a"
+        },
+        "value": [
+          1793524560.0,
+          "0.094"
+        ]
+      },
+      {
+        "metric": {
+          "__name__": "live_room_enter_p99_ms",
+          "service": "直播SDK",
+          "job": "live-sdk"
+        },
+        "value": [
+          1793524560.0,
+          "4280"
+        ]
+      }
+    ]
+  }
+}

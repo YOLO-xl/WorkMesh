@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.3.0-dev] - 2026-11-09
+
+### Added
+- 深色科技风视觉系统（`ui/theme.py` + `.streamlit/config.toml`）：深空底色、
+  细网格、青色光晕指标卡、渐变标题、状态胶囊；首页改为实时数据概览。
+- 新增「反馈分析」页：错误码 / 版本 / 平台分布与最新反馈列表。
+- Prometheus 指标连接器（`connectors/metrics/prometheus.py`）：只依赖标准库，
+  支持 instant / range 查询、Bearer / Basic 认证、结果点位上限。
+- metric 证据归一化：指标名、标签、数值进入 `attributes`，
+  `service` 从 `service` / `job` / `app` 等标签推导。
+- 上下文证据规则：指标 / 变更 / 备注按「同服务 + 同窗口」进入关联，
+  关系标记为 `context`，强度固定为弱，不参与「已验证事实」。
+- 诊断服务（`services/diagnosis_service.py`）：事实与推断分离、
+  每条结论绑定证据 ID、下一步建议带依据、可下载 Markdown 报告。
+- LLM 接入：OpenAI 兼容接口，输出做引用校验；未配置或无有效引用时退回规则诊断。
+- 「智能诊断」页面替换原「AI 分析」占位页。
+- 样例指标 `data/sample/prometheus_sample.json`，支持离线体验。
+
+### Changed
+- `CorrelationResult` 增加 `relation` 字段；`replace_links` 支持按 link 指定关系，
+  传 `relation=None` 时整体重建锚点关联。
+- 证据关联页新增「关系」列和「上下文证据」指标。
+- 导航调整为：工作台首页 / 数据接入 / 证据关联 / 反馈分析 / 智能诊断 / 报告中心。
+
+### Testing
+- 新增 `tests/test_prometheus_connector.py`、`tests/test_diagnosis_service.py`，
+  并为 metric 上下文证据补了关联层与服务层测试。
+- 全项目测试：80 passed。
+
 ## [0.2.0-dev] - 2026-11-09
 
 ### Added

@@ -457,18 +457,20 @@ class EvidenceRepository:
         anchor_type: str,
         anchor_id: str,
         links: Iterable[dict],
-        relation: str = "correlates",
+        relation: Optional[str] = "correlates",
     ) -> int:
         """重建锚点的证据关联，返回写入条数。
 
         links 中每项包含：
-        evidence_id、score、strength、matched_keys、reasons。
+        evidence_id、score、strength、matched_keys、reasons，
+        可选 relation（缺省用参数 relation）。
+        relation 传 None 时重建该锚点的全部关联（含 context 等混合关系）。
         """
 
         if anchor_type not in ANCHOR_TYPES:
             raise ValueError(f"不支持的锚点类型：{anchor_type}")
 
-        if relation not in RELATIONS:
+        if relation is not None and relation not in RELATIONS:
             raise ValueError(f"不支持的关联类型：{relation}")
 
         links = list(links)
@@ -476,16 +478,27 @@ class EvidenceRepository:
         conn = self._connect()
 
         try:
-            conn.execute(
-                """
-                DELETE FROM evidence_links
-                WHERE workspace_id = ?
-                  AND anchor_type = ?
-                  AND anchor_id = ?
-                  AND relation = ?
-                """,
-                (workspace_id, anchor_type, anchor_id, relation),
-            )
+            if relation is None:
+                conn.execute(
+                    """
+                    DELETE FROM evidence_links
+                    WHERE workspace_id = ?
+                      AND anchor_type = ?
+                      AND anchor_id = ?
+                    """,
+                    (workspace_id, anchor_type, anchor_id),
+                )
+            else:
+                conn.execute(
+                    """
+                    DELETE FROM evidence_links
+                    WHERE workspace_id = ?
+                      AND anchor_type = ?
+                      AND anchor_id = ?
+                      AND relation = ?
+                    """,
+                    (workspace_id, anchor_type, anchor_id, relation),
+                )
 
             now = utc_now()
             written = 0
@@ -494,6 +507,10 @@ class EvidenceRepository:
                 evidence_id = link.get("evidence_id")
                 if not evidence_id:
                     continue
+
+                link_relation = link.get("relation") or relation or "correlates"
+                if link_relation not in RELATIONS:
+                    raise ValueError(f"不支持的关联类型：{link_relation}")
 
                 conn.execute(
                     """
@@ -512,7 +529,7 @@ class EvidenceRepository:
                         anchor_type,
                         anchor_id,
                         evidence_id,
-                        relation,
+                        link_relation,
                         float(link.get("score", 0)),
                         link.get("strength", "weak"),
                         json_dumps(link.get("matched_keys", [])),

@@ -1,5 +1,6 @@
 import pytest
 
+from connectors.metrics.prometheus import PrometheusConnector
 from database.evidence_repository import EvidenceRepository
 from services.evidence_service import EvidenceService
 
@@ -86,6 +87,64 @@ def test_ingest_connector_records_and_build_context(
         workspace_id, "feedback", feedback_id
     )
     assert len(links) == 2
+
+
+def test_metric_evidence_enters_context_without_identity(
+    service, db_path, workspace_id, make_feedback
+):
+    """指标没有用户标识，只按「同服务 + 同窗口」作为上下文证据进入结果。"""
+
+    feedback_id = make_feedback()
+
+    payload = {
+        "status": "success",
+        "data": {
+            "resultType": "vector",
+            "result": [
+                {
+                    "metric": {
+                        "__name__": "live_player_init_fail_rate",
+                        "service": "直播SDK",
+                    },
+                    "value": [1793524560.0, "0.182"],
+                }
+            ],
+        },
+    }
+
+    connector = PrometheusConnector({"base_url": "http://prometheus:9090"})
+    points = connector.parse_response(payload, "live_player_init_fail_rate")
+    normalized = connector.normalize(points)
+
+    ingest = service.ingest_connector_records(
+        workspace_id,
+        normalized,
+        source_name="Prometheus：直播SDK",
+        source_type="metric",
+        connector_type="prometheus",
+    )
+
+    assert ingest["inserted"] == 1
+
+    context = service.build_context(
+        workspace_id, feedback_id, window_minutes=30, min_score=30
+    )
+
+    assert context["counts"]["context"] == 1
+    assert context["counts"]["strong"] == 0
+
+    metric_match = context["matches"][0]
+    assert metric_match["relation"] == "context"
+    assert metric_match["evidence"].evidence_type == "metric"
+
+    # 上下文证据不能进入「已验证事实」。
+    assert context["facts"] == []
+
+    links = EvidenceRepository(db_path).list_links(
+        workspace_id, "feedback", feedback_id
+    )
+    assert len(links) == 1
+    assert links[0]["relation"] == "context"
 
 
 def test_build_context_is_idempotent(
