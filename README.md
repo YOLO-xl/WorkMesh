@@ -34,6 +34,10 @@ WorkMesh 是一个面向企业技术支持与生产问题排查场景的 AI 工�
 - 反馈数据基础统计分析。
 - Connector 统一连接器接口与注册中心。
 - Elasticsearch 日志连接器初版。
+- Prometheus 指标连接器（样例指标接入，未对真实实例联调）。
+- 问题聚类：有错误码按码归并，无错误码按「现象 + 功能」加权归并，并保留未归类池。
+- 反馈全景：现象分布、功能提及分布与按现象下钻。
+- 规则诊断 + 可选 LLM 诊断：结论必须引用证据，引用不存在会被打回。
 - 统一 Evidence 证据模型：日志、反馈等接入后转换为同一结构并持久化。
 - 证据关联分析：按 Trace ID / Request ID / UID / 错误码 / 服务与时间窗口计算关联分数。
 - 「证据关联」页面：证据接入、生成问题上下文、回看已保存关联。
@@ -42,11 +46,12 @@ WorkMesh 是一个面向企业技术支持与生产问题排查场景的 AI 工�
 
 ## 规划中的能力
 
-- 完善 Elasticsearch 连接、认证和查询能力。
-- 接入 Prometheus、OpenSearch、Loki。
+- 用真实 Elasticsearch / Prometheus 实例联调，校准关联阈值。
+- 完善 Elasticsearch 认证与查询能力，接入 OpenSearch、Loki。
 - 接入 Jaeger / Tempo 链路追踪。
 - 跨数据源证据检索与问题上下文整合。
-- 基于证据的 AI 辅助诊断（结论必须引用证据）。
+- AI 诊断线上化：配置 LLM、补齐报告中心，让结论可沉淀回看。
+- 大文件分块读取与后台导入任务。
 
 ## 技术栈
 
@@ -54,6 +59,7 @@ WorkMesh 是一个面向企业技术支持与生产问题排查场景的 AI 工�
 - Streamlit
 - Pandas
 - SQLite
+- jieba
 - Elasticsearch Python Client
 - pytest
 - Git

@@ -507,8 +507,4 @@ else:
         ["Coming Soon"],
     )
     st.write("")
-    st.button(
-        "返回系统概览",
-        on_click=go_to_page,
-        args=("系统概览",),
-    )
+    st.caption("可用顶部「← 返回首页」回工作台。")
