@@ -217,6 +217,43 @@ def _render_tracking_form(
         st.rerun()
 
 
+def _render_tracking_section(
+    tracking_repository: ReportTrackingRepository,
+    workspace_id: str,
+    scope: str,
+    report_id: str,
+    entry: dict,
+    flash_key: str,
+) -> None:
+    if entry.get("status") == "pending":
+        _render_tracking_form(
+            tracking_repository,
+            workspace_id,
+            scope,
+            report_id,
+            entry,
+            flash_key,
+        )
+        return
+
+    status_label = TRACKING_LABELS.get(entry.get("status"), "已处理")
+    st.caption(
+        f"{status_label}的报告默认锁定处理记录；如需修改，先重新打开。"
+    )
+
+    if st.button("重新打开处理", key=f"reopen_tracking_{scope}_{report_id}"):
+        tracking_repository.upsert(
+            workspace_id,
+            scope,
+            report_id,
+            status="pending",
+            owner=entry.get("owner"),
+            note=entry.get("note"),
+        )
+        st.session_state[flash_key] = "报告已重新打开，可以继续修改处理记录。"
+        st.rerun()
+
+
 def _render_bulk_tracking(
     tracking_repository: ReportTrackingRepository,
     workspace_id: str,
@@ -369,9 +406,10 @@ def _render_reports(
             report["confidence"], report["confidence"] or "—"
         )
         head = report["error_code"] or "无错误码"
+        tracking_label = TRACKING_LABELS.get(entry["status"], "待处理")
         label = (
-            f"{_fmt_time(report['created_at'])} · {report['product'] or '未知产品'}"
-            f" · {head} · {report['title']}"
+            f"[{tracking_label}] {_fmt_time(report['created_at'])}"
+            f" · {report['product'] or '未知产品'} · {head} · {report['title']}"
         )
 
         with st.expander(label):
@@ -389,7 +427,7 @@ def _render_reports(
             )
             st.caption(_tracking_line(entry))
             st.markdown(report["markdown"])
-            _render_tracking_form(
+            _render_tracking_section(
                 tracking_repository,
                 workspace_id,
                 "feedback",
@@ -593,9 +631,11 @@ def _render_cluster_reports(
             report["confidence"], report["confidence"] or "—"
         )
         head = report["error_code"] or "无错误码"
+        tracking_label = TRACKING_LABELS.get(entry["status"], "待处理")
         label = (
-            f"{_fmt_time(report['created_at'])} · {report['product'] or '未知产品'}"
-            f" · {head} · {report['size']} 条反馈 · {report['title']}"
+            f"[{tracking_label}] {_fmt_time(report['created_at'])}"
+            f" · {report['product'] or '未知产品'} · {head}"
+            f" · {report['size']} 条反馈 · {report['title']}"
         )
 
         with st.expander(label):
@@ -627,7 +667,7 @@ def _render_cluster_reports(
             st.caption(f"严重程度：{severity}｜生成方式：规则汇总｜{trend}")
             st.caption(_tracking_line(entry))
             st.markdown(report["markdown"])
-            _render_tracking_form(
+            _render_tracking_section(
                 tracking_repository,
                 workspace_id,
                 "cluster",
