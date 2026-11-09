@@ -1,0 +1,294 @@
+{
+  "schema_version": 1,
+  "id": "payment.result_mismatch",
+  "name": "支付结果不一致",
+  "version": "2026.11",
+  "owner": "feedback-platform",
+  "priority": 70,
+  "enabled": true,
+  "effective_from": "2026-11-01",
+  "tags": [
+    "支付",
+    "扣款",
+    "回调"
+  ],
+  "match": {
+    "products": [
+      "支付中心"
+    ],
+    "error_codes": [
+      "E6001",
+      "E6002"
+    ],
+    "keywords_any": [
+      "支付失败",
+      "扣款",
+      "重复扣款",
+      "支付成功",
+      "订单状态"
+    ],
+    "symptoms_any": [
+      "支付失败",
+      "扣款后订单未更新",
+      "重复扣款"
+    ],
+    "features_any": [
+      "支付",
+      "下单",
+      "退款"
+    ]
+  },
+  "sources": [
+    {
+      "id": "feedback_recent",
+      "kind": "feedback",
+      "required": true,
+      "window_minutes": 30,
+      "limit": 200,
+      "query": {
+        "products": [
+          "支付中心"
+        ],
+        "error_codes": [
+          "E6001",
+          "E6002"
+        ],
+        "limit": 200
+      }
+    },
+    {
+      "id": "es_payment",
+      "kind": "connector",
+      "connector_type": "elasticsearch",
+      "required": false,
+      "window_minutes": 30,
+      "limit": 200,
+      "query": {
+        "index": "app-payment-*",
+        "time_field": "@timestamp",
+        "filters": {
+          "service": "payment-gateway",
+          "uid": "{{anchor.uid}}",
+          "error_code": "{{anchor.error_code}}"
+        },
+        "size": 200
+      }
+    },
+    {
+      "id": "prom_payment",
+      "kind": "connector",
+      "connector_type": "prometheus",
+      "required": false,
+      "window_minutes": 30,
+      "query": {
+        "promql": "sum(rate(payment_result_total{status=\"success\"}[5m])) / sum(rate(payment_result_total[5m]))",
+        "step": "1m"
+      }
+    }
+  ],
+  "signals": [
+    {
+      "id": "recent_feedback_count",
+      "source": "feedback_recent",
+      "kind": "count"
+    },
+    {
+      "id": "same_uid_log_count",
+      "source": "es_payment",
+      "kind": "count"
+    },
+    {
+      "id": "payment_success_rate",
+      "source": "prom_payment",
+      "kind": "max",
+      "field": "value"
+    },
+    {
+      "id": "success_rate_low",
+      "kind": "threshold_flag",
+      "signal": "payment_success_rate",
+      "op": "lt",
+      "value": 0.95
+    }
+  ],
+  "steps": [
+    {
+      "id": "confirm_scope",
+      "title": "确认反馈面",
+      "uses": [
+        "feedback_recent"
+      ],
+      "observe": "recent_feedback_count",
+      "criteria": {
+        "pass": {
+          "signal": "recent_feedback_count",
+          "op": "gte",
+          "value": 5
+        },
+        "fail": {
+          "signal": "recent_feedback_count",
+          "op": "lt",
+          "value": 5
+        }
+      },
+      "on_missing": "mark_unverified",
+      "guidance": "同产品同错误码≥5 条时按面上问题排查；少于 5 条先按单笔订单处理。"
+    },
+    {
+      "id": "check_payment_log",
+      "title": "查同 UID 支付网关日志",
+      "uses": [
+        "es_payment"
+      ],
+      "observe": "same_uid_log_count",
+      "criteria": {
+        "pass": {
+          "signal": "same_uid_log_count",
+          "op": "gte",
+          "value": 1
+        },
+        "fail": {
+          "signal": "same_uid_log_count",
+          "op": "eq",
+          "value": 0
+        }
+      },
+      "on_missing": "mark_unverified",
+      "guidance": "有同 UID 日志时，按订单号看支付、回调、对账三个节点。"
+    },
+    {
+      "id": "check_success_rate",
+      "title": "核对支付成功率",
+      "uses": [
+        "prom_payment"
+      ],
+      "observe": "payment_success_rate",
+      "criteria": {
+        "pass": {
+          "signal": "payment_success_rate",
+          "op": "gte",
+          "value": 0.95
+        },
+        "fail": {
+          "signal": "payment_success_rate",
+          "op": "lt",
+          "value": 0.95
+        }
+      },
+      "on_missing": "mark_unverified",
+      "guidance": "成功率低于 95% 时优先怀疑支付通道或回调链路。"
+    }
+  ],
+  "rules": [
+    {
+      "id": "surface_payment_failure",
+      "priority": 30,
+      "when": {
+        "all": [
+          {
+            "signal": "recent_feedback_count",
+            "op": "gte",
+            "value": 5
+          },
+          {
+            "signal": "payment_success_rate",
+            "op": "lt",
+            "value": 0.95
+          }
+        ]
+      },
+      "requires": [
+        "prom_payment"
+      ],
+      "then": {
+        "type": "hypothesis",
+        "statement": "同产品同错误码反馈集中，且支付成功率下降，优先怀疑支付通道或回调链路的面上问题。",
+        "confidence": "medium",
+        "evidence_refs": [
+          "S:prom_payment.payment_success_rate",
+          "S:feedback_recent.recent_feedback_count"
+        ]
+      },
+      "actions": [
+        "按支付渠道拆分成功率，确认是否集中在单一通道",
+        "核对回调延迟、重试与对账补偿任务",
+        "抽查最近 5 笔失败订单的订单状态与流水"
+      ]
+    },
+    {
+      "id": "single_order_issue",
+      "priority": 25,
+      "when": {
+        "all": [
+          {
+            "signal": "same_uid_log_count",
+            "op": "gte",
+            "value": 1
+          },
+          {
+            "signal": "payment_success_rate",
+            "op": "gte",
+            "value": 0.95
+          }
+        ]
+      },
+      "requires": [
+        "es_payment",
+        "prom_payment"
+      ],
+      "then": {
+        "type": "hypothesis",
+        "statement": "支付整体成功率正常，但该用户有支付请求日志，问题更可能在单笔订单状态或客户端结果页。",
+        "confidence": "medium",
+        "evidence_refs": [
+          "S:es_payment.same_uid_log_count",
+          "S:prom_payment.payment_success_rate"
+        ]
+      },
+      "actions": [
+        "按订单号核对支付流水、回调记录与订单状态",
+        "核对客户端是否把超时当失败展示",
+        "确认是否存在重复提交或重复扣款"
+      ]
+    },
+    {
+      "id": "no_external_data",
+      "priority": 10,
+      "when": {
+        "all": [
+          {
+            "signal": "same_uid_log_count",
+            "op": "is_null"
+          },
+          {
+            "signal": "payment_success_rate",
+            "op": "is_null"
+          }
+        ]
+      },
+      "then": {
+        "type": "action",
+        "statement": "当前只有反馈面数据，没有支付网关日志和成功率指标，不能判断是个体还是面上问题。",
+        "confidence": "low",
+        "evidence_refs": [
+          "S:feedback_recent.recent_feedback_count"
+        ]
+      },
+      "actions": [
+        "补同 UID 支付网关日志或订单号",
+        "补支付成功率指标",
+        "先按订单号人工核对支付与订单状态"
+      ]
+    }
+  ],
+  "output_policy": {
+    "max_confidence_without_trace": "medium",
+    "forbid_root_cause": true,
+    "min_evidence_refs_for_hypothesis": 1,
+    "require_any_of_sources": [
+      "prom_payment",
+      "es_payment"
+    ],
+    "disclaimer": "没有订单级流水和 Trace 时，结论只能定位到支付链路方向，不能判定具体扣款结果。"
+  }
+}

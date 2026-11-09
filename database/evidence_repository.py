@@ -424,6 +424,71 @@ class EvidenceRepository:
 
         return [_row_to_evidence(row) for row in rows]
 
+    def query_evidence(
+        self,
+        workspace_id: str,
+        *,
+        evidence_types: Optional[Iterable[str]] = None,
+        service: Optional[str] = None,
+        uid: Optional[str] = None,
+        error_code: Optional[str] = None,
+        trace_id: Optional[str] = None,
+        request_id: Optional[str] = None,
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+        limit: int = 200,
+    ) -> list[Evidence]:
+        """按场景条件查询证据，供故障场景模型使用。"""
+
+        conditions = ["workspace_id = ?"]
+        parameters: list[Any] = [workspace_id]
+
+        type_values = [
+            str(item).strip()
+            for item in (evidence_types or [])
+            if str(item).strip()
+        ]
+        if type_values:
+            conditions.append(
+                "evidence_type IN (" + ",".join("?" for _ in type_values) + ")"
+            )
+            parameters.extend(type_values)
+
+        for name, value in (
+            ("service", service),
+            ("uid", uid),
+            ("error_code", error_code),
+            ("trace_id", trace_id),
+            ("request_id", request_id),
+        ):
+            if value:
+                conditions.append(f"{name} = ?")
+                parameters.append(str(value))
+
+        if start:
+            conditions.append("timestamp >= ?")
+            parameters.append(str(start))
+
+        if end:
+            conditions.append("timestamp <= ?")
+            parameters.append(str(end))
+
+        limit = min(max(int(limit), 1), 500)
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT *
+                FROM evidence_records
+                WHERE {' AND '.join(conditions)}
+                ORDER BY timestamp DESC
+                LIMIT ?
+                """,
+                (*parameters, limit),
+            ).fetchall()
+
+        return [_row_to_evidence(row) for row in rows]
+
     def count_evidence(
         self,
         workspace_id: str,

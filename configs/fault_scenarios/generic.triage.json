@@ -1,0 +1,140 @@
+{
+  "schema_version": 1,
+  "id": "generic.triage",
+  "name": "通用分诊",
+  "version": "2026.11",
+  "owner": "feedback-platform",
+  "priority": 0,
+  "enabled": true,
+  "effective_from": "2026-11-01",
+  "tags": ["兜底", "通用"],
+  "match": {
+    "always": true
+  },
+  "sources": [
+    {
+      "id": "feedback_recent",
+      "kind": "feedback",
+      "required": true,
+      "window_minutes": 30,
+      "limit": 200,
+      "query": {
+        "limit": 200
+      }
+    },
+    {
+      "id": "evidence_recent",
+      "kind": "evidence",
+      "required": false,
+      "window_minutes": 30,
+      "limit": 200,
+      "query": {
+        "limit": 200
+      }
+    }
+  ],
+  "signals": [
+    {
+      "id": "recent_feedback_count",
+      "source": "feedback_recent",
+      "kind": "count"
+    },
+    {
+      "id": "recent_evidence_count",
+      "source": "evidence_recent",
+      "kind": "count"
+    }
+  ],
+  "steps": [
+    {
+      "id": "confirm_feedback",
+      "title": "确认反馈规模",
+      "uses": ["feedback_recent"],
+      "observe": "recent_feedback_count",
+      "criteria": {
+        "pass": {"signal": "recent_feedback_count", "op": "gte", "value": 3},
+        "fail": {"signal": "recent_feedback_count", "op": "lt", "value": 3}
+      },
+      "on_missing": "mark_unverified",
+      "guidance": "单条反馈先按个体问题处理；多条同产品反馈再考虑面上问题。"
+    },
+    {
+      "id": "confirm_evidence",
+      "title": "确认已有证据",
+      "uses": ["evidence_recent"],
+      "observe": "recent_evidence_count",
+      "criteria": {
+        "pass": {"signal": "recent_evidence_count", "op": "gte", "value": 1},
+        "fail": {"signal": "recent_evidence_count", "op": "eq", "value": 0}
+      },
+      "on_missing": "mark_unverified",
+      "guidance": "没有日志/指标时，先补证据源，不输出方向性结论。"
+    }
+  ],
+  "rules": [
+    {
+      "id": "multi_feedback",
+      "priority": 10,
+      "when": {
+        "all": [
+          {"signal": "recent_feedback_count", "op": "gte", "value": 3}
+        ]
+      },
+      "then": {
+        "type": "action",
+        "statement": "窗口内有多条同产品反馈，建议按错误码和现象分组后再判断是否为同一问题。",
+        "confidence": "low",
+        "evidence_refs": ["S:feedback_recent.recent_feedback_count"]
+      },
+      "actions": [
+        "先按错误码或现象做聚类，确认是否同一批问题",
+        "补充该产品的日志或指标证据"
+      ]
+    },
+    {
+      "id": "single_feedback",
+      "priority": 5,
+      "when": {
+        "all": [
+          {"signal": "recent_feedback_count", "op": "lt", "value": 3}
+        ]
+      },
+      "then": {
+        "type": "action",
+        "statement": "当前只有少量反馈，先按个体问题处理，不扩大到面上故障。",
+        "confidence": "low",
+        "evidence_refs": ["S:feedback_recent.recent_feedback_count"]
+      },
+      "actions": [
+        "补用户联系方式、版本、设备与复现步骤",
+        "补请求级 Trace 或同 UID 日志"
+      ]
+    },
+    {
+      "id": "no_evidence",
+      "priority": 1,
+      "when": {
+        "all": [
+          {"signal": "recent_evidence_count", "op": "is_null"}
+        ]
+      },
+      "then": {
+        "type": "action",
+        "statement": "没有可用的日志或指标证据，不能判断故障方向。",
+        "confidence": "low",
+        "evidence_refs": ["S:feedback_recent.recent_feedback_count"]
+      },
+      "actions": [
+        "先接入日志或指标证据",
+        "或提供同 UID 的请求日志/Trace ID"
+      ]
+    }
+  ],
+  "output_policy": {
+    "max_confidence_without_trace": "medium",
+    "forbid_root_cause": true,
+    "min_evidence_refs_for_hypothesis": 1,
+    "require_any_of_sources": ["feedback_recent"],
+    "disclaimer": "通用分诊只做补证和收口，不替代具体产品线的故障场景。"
+  }
+}

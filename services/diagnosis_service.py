@@ -16,6 +16,11 @@ from typing import Any, Callable, Optional
 
 from core.evidence import Evidence
 from services.evidence_service import TYPE_LABELS, EvidenceService
+from services.fault_scenario_service import (
+    FaultScenarioRegistry,
+    ScenarioRunner,
+    match_scenario,
+)
 from services.llm_config import resolve_settings
 
 
@@ -47,9 +52,18 @@ class DiagnosisService:
         evidence_service: Optional[EvidenceService] = None,
         llm_client: Optional[Callable[[str], str]] = None,
         db_path=None,
+        scenario_registry: Optional[FaultScenarioRegistry] = None,
     ):
         self.evidence_service = evidence_service or EvidenceService(db_path=db_path)
         self._llm_client = llm_client
+        self.scenario_registry = scenario_registry
+        self._scenario_registry_loaded = scenario_registry is not None
+
+    def _get_scenario_registry(self) -> FaultScenarioRegistry:
+        if not self._scenario_registry_loaded:
+            self.scenario_registry = FaultScenarioRegistry()
+            self._scenario_registry_loaded = True
+        return self.scenario_registry
 
     # ------------------------------------------------------------------
     # 配置
@@ -108,6 +122,7 @@ class DiagnosisService:
         window_minutes: int = 30,
         min_score: float = 30.0,
         use_llm: bool = False,
+        manual_answers: Optional[dict[str, Any]] = None,
     ) -> dict:
         context = self.evidence_service.build_context(
             workspace_id=workspace_id,
@@ -120,6 +135,13 @@ class DiagnosisService:
         result = self._rule_diagnosis(context, refs)
         result["generated_by"] = "rule"
         result["llm_error"] = None
+
+        scenario_run = self._run_scenario(
+            workspace_id=workspace_id,
+            context=context,
+            manual_answers=manual_answers or {},
+        )
+        result["scenario"] = scenario_run
 
         if use_llm:
             if not self.llm_available:
@@ -137,9 +159,78 @@ class DiagnosisService:
                 except Exception as exc:  # 引用校验失败或调用失败都退回规则诊断
                     result["llm_error"] = f"LLM 诊断未采用：{exc}"
 
+        if scenario_run and scenario_run.get("next_actions"):
+            result["next_steps"] = self._merge_scenario_actions(
+                result.get("next_steps") or [], scenario_run
+            )
+
         result["markdown"] = render_markdown(result)
+        result["markdown_body"] = render_markdown(result, include_scenario=False)
         result["context_counts"] = context["counts"]
         return result
+
+    def _run_scenario(
+        self,
+        workspace_id: str,
+        context: dict,
+        manual_answers: dict[str, Any],
+    ) -> Optional[dict]:
+        """匹配并执行故障场景；配置不可用时返回 None，不影响规则诊断。"""
+
+        try:
+            registry = self._get_scenario_registry()
+        except Exception:
+            return None
+
+        if not registry.scenarios:
+            return None
+
+        feedback = context.get("anchor_record") or {}
+        scenario, score, reasons = match_scenario(feedback, registry.enabled())
+
+        if not scenario:
+            return None
+
+        runner = ScenarioRunner(
+            feedback_repository=self.evidence_service.feedback_repository,
+            evidence_repository=self.evidence_service.evidence_repository,
+            manual_answers=manual_answers,
+        )
+        run = runner.run(
+            workspace_id=workspace_id,
+            feedback=feedback,
+            scenario=scenario,
+            anchor=context.get("anchor"),
+        )
+        run["match"] = {"score": score, "reasons": reasons}
+        return run
+
+    @staticmethod
+    def _merge_scenario_actions(
+        next_steps: list[dict],
+        scenario_run: dict,
+    ) -> list[dict]:
+        existing = {
+            " ".join(str(item.get("action") or "").split())
+            for item in next_steps
+        }
+        merged = list(next_steps)
+
+        for action in scenario_run.get("next_actions") or []:
+            text = " ".join(str(action).split())
+            if not text or text in existing:
+                continue
+            existing.add(text)
+            merged.append({
+                "action": text,
+                "rationale": (
+                    f"故障场景「{scenario_run.get('name') or scenario_run['scenario_id']}」"
+                    " 的排查动作"
+                ),
+                "evidence_ids": [],
+            })
+
+        return merged
 
     # ------------------------------------------------------------------
     # 规则诊断
@@ -470,7 +561,7 @@ def _confidence(strong: list[dict]) -> str:
     return "low"
 
 
-def render_markdown(result: dict) -> str:
+def render_markdown(result: dict, include_scenario: bool = True) -> str:
     """把诊断结果渲染成可直接下载的 Markdown 报告。"""
 
     short_ids = {
@@ -516,6 +607,72 @@ def render_markdown(result: dict) -> str:
         ) or "无证据引用"
         lines.append(f"- **{step['action']}**：{step['rationale']}")
         lines.append(f"  - 依据：{refs}")
+
+    if include_scenario:
+        lines.extend(["", "## 故障场景"])
+
+        scenario = result.get("scenario")
+        if scenario:
+            status_labels = {
+                "verified": "已验证",
+                "partial": "部分验证",
+                "blocked": "关键数据缺失",
+            }
+            lines.append(
+                f"- 命中场景：{scenario.get('name')}（{scenario.get('scenario_id')} · "
+                f"{scenario.get('version')}）"
+            )
+            lines.append(
+                f"- 场景状态：{status_labels.get(scenario.get('status'), scenario.get('status'))}"
+                f"｜结论置信度：{CONFIDENCE_LABELS.get(scenario.get('confidence'), scenario.get('confidence'))}"
+            )
+
+            if scenario.get("match", {}).get("reasons"):
+                lines.append(
+                    "- 命中理由："
+                    + "；".join(scenario["match"]["reasons"])
+                )
+
+            lines.append("")
+            lines.append("| 排查步骤 | 状态 | 观测值 | 说明 |")
+            lines.append("|---|---|---|---|")
+
+            step_labels = {
+                "pass": "通过",
+                "fail": "未通过",
+                "unknown": "未验证",
+                "skipped": "跳过",
+            }
+
+            for step in scenario.get("steps") or []:
+                lines.append(
+                    f"| {step['title']} | {step_labels.get(step['status'], step['status'])} "
+                    f"| {step.get('observation') or '—'} | {step.get('reason') or '—'} |"
+                )
+
+            if scenario.get("hypotheses"):
+                lines.append("")
+                lines.append("### 场景假设")
+                for item in scenario["hypotheses"]:
+                    confidence = CONFIDENCE_LABELS.get(item.get("confidence"), item.get("confidence"))
+                    refs = "、".join(item.get("evidence_refs") or []) or "无信号引用"
+                    lines.append(f"- （假设，置信度 {confidence}）{item['statement']}")
+                    lines.append(f"  - 依据：{refs}")
+
+            if scenario.get("missing_sources"):
+                lines.append("")
+                lines.append(
+                    "- 缺失数据源："
+                    + "、".join(item["id"] for item in scenario["missing_sources"])
+                )
+
+            if scenario.get("limits"):
+                lines.append("")
+                lines.append("### 结论边界")
+                for limit in scenario["limits"]:
+                    lines.append(f"- {limit}")
+        else:
+            lines.append("- 未命中已配置的故障场景，按通用规则诊断处理。")
 
     lines.extend(["", "## 证据清单"])
 

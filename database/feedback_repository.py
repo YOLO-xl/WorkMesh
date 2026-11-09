@@ -463,6 +463,72 @@ class FeedbackRepository:
                 "records": [dict(row) for row in rows],
             }
 
+    def query_feedback(
+        self,
+        workspace_id: str,
+        *,
+        products: Optional[Iterable[str]] = None,
+        error_codes: Optional[Iterable[str]] = None,
+        uid: Optional[str] = None,
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+        limit: int = 200,
+    ) -> list[dict]:
+        """按场景条件查询反馈，供故障场景模型使用。
+
+        与分页列表不同，这里按产品、错误码、UID 和时间窗口过滤，
+        返回按反馈时间倒序的记录；上限仍为 500，避免单次查询失控。
+        """
+
+        conditions = ["workspace_id = ?", "deleted_at IS NULL"]
+        parameters: list[Any] = [workspace_id]
+
+        product_values = [
+            str(item).strip() for item in (products or []) if str(item).strip()
+        ]
+        if product_values:
+            conditions.append(
+                "product IN (" + ",".join("?" for _ in product_values) + ")"
+            )
+            parameters.extend(product_values)
+
+        code_values = [
+            str(item).strip() for item in (error_codes or []) if str(item).strip()
+        ]
+        if code_values:
+            conditions.append(
+                "error_code IN (" + ",".join("?" for _ in code_values) + ")"
+            )
+            parameters.extend(code_values)
+
+        if uid:
+            conditions.append("uid = ?")
+            parameters.append(str(uid))
+
+        if start:
+            conditions.append("feedback_time >= ?")
+            parameters.append(str(start))
+
+        if end:
+            conditions.append("feedback_time <= ?")
+            parameters.append(str(end))
+
+        limit = min(max(int(limit), 1), 500)
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT *
+                FROM feedback_records
+                WHERE {' AND '.join(conditions)}
+                ORDER BY feedback_time DESC, created_at DESC
+                LIMIT ?
+                """,
+                (*parameters, limit),
+            ).fetchall()
+
+        return [dict(row) for row in rows]
+
     def get_batch_statistics(self, batch_id: str) -> Optional[dict]:
         """查询导入批次统计信息。"""
 

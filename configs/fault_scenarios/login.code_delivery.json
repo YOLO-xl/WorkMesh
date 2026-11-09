@@ -1,0 +1,363 @@
+{
+  "schema_version": 1,
+  "id": "login.code_delivery",
+  "name": "登录验证码收不到",
+  "version": "2026.11",
+  "owner": "feedback-platform",
+  "priority": 80,
+  "enabled": true,
+  "effective_from": "2026-11-01",
+  "tags": [
+    "账号",
+    "验证码",
+    "登录"
+  ],
+  "match": {
+    "products": [
+      "账号服务"
+    ],
+    "error_codes": [
+      "E5001",
+      "E5002"
+    ],
+    "keywords_any": [
+      "验证码",
+      "收不到",
+      "登录不上",
+      "短信"
+    ],
+    "symptoms_any": [
+      "收不到验证码",
+      "验证码无效"
+    ],
+    "features_any": [
+      "登录",
+      "注册"
+    ]
+  },
+  "sources": [
+    {
+      "id": "feedback_recent",
+      "kind": "feedback",
+      "required": true,
+      "window_minutes": 30,
+      "limit": 200,
+      "query": {
+        "products": [
+          "账号服务"
+        ],
+        "error_codes": [
+          "E5001",
+          "E5002"
+        ],
+        "limit": 200
+      }
+    },
+    {
+      "id": "es_sms",
+      "kind": "connector",
+      "connector_type": "elasticsearch",
+      "required": false,
+      "window_minutes": 30,
+      "limit": 200,
+      "query": {
+        "index": "app-sms-*",
+        "time_field": "@timestamp",
+        "filters": {
+          "service": "sms-gateway",
+          "uid": "{{anchor.uid}}",
+          "error_code": "{{anchor.error_code}}"
+        },
+        "size": 200
+      }
+    },
+    {
+      "id": "prom_sms",
+      "kind": "connector",
+      "connector_type": "prometheus",
+      "required": false,
+      "window_minutes": 30,
+      "query": {
+        "promql": "sum by (provider) (rate(sms_send_total{status=\"failed\"}[5m])) / sum by (provider) (rate(sms_send_total[5m]))",
+        "step": "1m"
+      }
+    },
+    {
+      "id": "trace_lookup",
+      "kind": "manual",
+      "required": false,
+      "query": {
+        "prompt": "补一个请求级 Trace ID（短信发送请求）",
+        "options": [
+          "已有 Trace",
+          "暂无 Trace"
+        ]
+      }
+    }
+  ],
+  "signals": [
+    {
+      "id": "recent_feedback_count",
+      "source": "feedback_recent",
+      "kind": "count"
+    },
+    {
+      "id": "same_uid_log_count",
+      "source": "es_sms",
+      "kind": "count"
+    },
+    {
+      "id": "provider_error_rate",
+      "source": "prom_sms",
+      "kind": "max",
+      "field": "value"
+    },
+    {
+      "id": "provider_failure_flag",
+      "kind": "threshold_flag",
+      "signal": "provider_error_rate",
+      "op": "gte",
+      "value": 0.05
+    },
+    {
+      "id": "trace_available",
+      "source": "trace_lookup",
+      "kind": "value"
+    }
+  ],
+  "steps": [
+    {
+      "id": "confirm_scope",
+      "title": "确认反馈面",
+      "uses": [
+        "feedback_recent"
+      ],
+      "observe": "recent_feedback_count",
+      "criteria": {
+        "pass": {
+          "signal": "recent_feedback_count",
+          "op": "gte",
+          "value": 2
+        },
+        "fail": {
+          "signal": "recent_feedback_count",
+          "op": "lt",
+          "value": 2
+        }
+      },
+      "on_missing": "mark_unverified",
+      "guidance": "只有 1 条时先按个体问题处理；≥2 条再看是否面上扩散。"
+    },
+    {
+      "id": "check_same_uid",
+      "title": "查同 UID 短信网关日志",
+      "uses": [
+        "es_sms"
+      ],
+      "observe": "same_uid_log_count",
+      "criteria": {
+        "pass": {
+          "signal": "same_uid_log_count",
+          "op": "gte",
+          "value": 1
+        },
+        "fail": {
+          "signal": "same_uid_log_count",
+          "op": "eq",
+          "value": 0
+        }
+      },
+      "on_missing": "mark_unverified",
+      "guidance": "有同 UID 日志时，继续看错误码是通道失败、模板失败还是频控。"
+    },
+    {
+      "id": "check_provider",
+      "title": "核对短信服务商失败率",
+      "uses": [
+        "prom_sms"
+      ],
+      "observe": "provider_error_rate",
+      "criteria": {
+        "pass": {
+          "signal": "provider_error_rate",
+          "op": "lt",
+          "value": 0.05
+        },
+        "fail": {
+          "signal": "provider_error_rate",
+          "op": "gte",
+          "value": 0.05
+        }
+      },
+      "on_missing": "mark_unverified",
+      "guidance": "失败率 ≥5% 时优先怀疑通道侧；低于 5% 时回到账号/设备侧。"
+    },
+    {
+      "id": "collect_trace",
+      "title": "补齐请求级 Trace",
+      "uses": [
+        "trace_lookup"
+      ],
+      "observe": "trace_available",
+      "criteria": {
+        "pass": {
+          "signal": "trace_available",
+          "op": "eq",
+          "value": true
+        },
+        "fail": {
+          "signal": "trace_available",
+          "op": "eq",
+          "value": false
+        }
+      },
+      "on_missing": "mark_unverified",
+      "guidance": "没有 Trace 时，结论只能停在服务/通道方向。"
+    }
+  ],
+  "rules": [
+    {
+      "id": "provider_side",
+      "priority": 30,
+      "when": {
+        "all": [
+          {
+            "signal": "provider_error_rate",
+            "op": "gte",
+            "value": 0.05
+          },
+          {
+            "signal": "same_uid_log_count",
+            "op": "eq",
+            "value": 0
+          }
+        ]
+      },
+      "requires": [
+        "prom_sms"
+      ],
+      "then": {
+        "type": "hypothesis",
+        "statement": "短信服务商侧失败率升高，且没有同 UID 网关日志，优先怀疑通道侧。",
+        "confidence": "medium",
+        "evidence_refs": [
+          "S:prom_sms.provider_error_rate"
+        ]
+      },
+      "actions": [
+        "核对短信服务商通道余额、模板审核状态与失败码分布",
+        "对比同时段其他产品的短信发送成功率"
+      ]
+    },
+    {
+      "id": "account_or_device_side",
+      "priority": 25,
+      "when": {
+        "all": [
+          {
+            "signal": "same_uid_log_count",
+            "op": "gte",
+            "value": 1
+          },
+          {
+            "signal": "provider_error_rate",
+            "op": "lt",
+            "value": 0.05
+          }
+        ]
+      },
+      "requires": [
+        "es_sms",
+        "prom_sms"
+      ],
+      "then": {
+        "type": "hypothesis",
+        "statement": "网关有该用户请求且通道整体正常，问题更可能在账号状态、设备或客户端链路。",
+        "confidence": "medium",
+        "evidence_refs": [
+          "S:es_sms.same_uid_log_count",
+          "S:prom_sms.provider_error_rate"
+        ]
+      },
+      "actions": [
+        "核对该 UID 的账号风控/频控状态",
+        "核对客户端版本、网络与短信权限",
+        "补请求级 Trace 后定位具体失败节点"
+      ]
+    },
+    {
+      "id": "multi_factor",
+      "priority": 20,
+      "when": {
+        "all": [
+          {
+            "signal": "same_uid_log_count",
+            "op": "gte",
+            "value": 1
+          },
+          {
+            "signal": "provider_error_rate",
+            "op": "gte",
+            "value": 0.05
+          }
+        ]
+      },
+      "requires": [
+        "es_sms",
+        "prom_sms"
+      ],
+      "then": {
+        "type": "hypothesis",
+        "statement": "用户请求与通道失败同时存在，可能是通道抖动叠加个体频控，暂不能归为单点原因。",
+        "confidence": "low",
+        "evidence_refs": [
+          "S:es_sms.same_uid_log_count",
+          "S:prom_sms.provider_error_rate"
+        ]
+      },
+      "actions": [
+        "按失败码拆分通道失败与频控失败",
+        "对比同产品不同时间段的失败率"
+      ]
+    },
+    {
+      "id": "no_data",
+      "priority": 10,
+      "when": {
+        "all": [
+          {
+            "signal": "same_uid_log_count",
+            "op": "is_null"
+          },
+          {
+            "signal": "provider_error_rate",
+            "op": "is_null"
+          }
+        ]
+      },
+      "then": {
+        "type": "action",
+        "statement": "当前没有可用的网关日志和通道指标，不能判断方向。",
+        "confidence": "low",
+        "evidence_refs": [
+          "S:feedback_recent.recent_feedback_count"
+        ]
+      },
+      "actions": [
+        "先补 ES 日志接入或粘贴同 UID 日志",
+        "补 Prometheus 短信失败率指标",
+        "补请求级 Trace ID"
+      ]
+    }
+  ],
+  "output_policy": {
+    "max_confidence_without_trace": "medium",
+    "forbid_root_cause": true,
+    "min_evidence_refs_for_hypothesis": 1,
+    "require_any_of_sources": [
+      "es_sms",
+      "prom_sms"
+    ],
+    "disclaimer": "没有请求级 Trace 时，结论只能定位到服务/通道方向，不能定位到具体代码行。"
+  }
+}

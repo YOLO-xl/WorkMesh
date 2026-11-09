@@ -36,6 +36,15 @@ WorkMesh 是面向企业技术支持与生产问题排查场景的 AI 工作台�
 
 ## 2. 当前阶段
 
+### 故障场景模型
+- [x] 场景对象模型、配置格式、校验规则与输出契约（`docs/FAULT_SCENARIO_MODEL.md`）。
+- [x] 场景注册 / 校验 / 匹配 / 信号计算 / 步骤判定 / 规则执行（`services/fault_scenario_service.py`）。
+- [x] 本地 `feedback` / `evidence` / `manual` 三类数据源。
+- [x] 首批三个场景：登录验证码、支付结果不一致、通用兜底。
+- [x] 单条诊断页故障场景卡片与 Markdown「故障场景」段。
+- [ ] 场景阶段 2：接真实 ES / Prometheus connector source，按场景聚合命中率与 blocked 率。
+- [ ] `report_history` / `knowledge` 数据源。
+
 ### Connector 能力完善
 - [ ] 验证真实 Elasticsearch 服务连接。
 - [ ] 完善认证、TLS 和连接配置管理。

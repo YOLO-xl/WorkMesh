@@ -3,6 +3,24 @@
 ## [0.7.0-dev] - 2026-11-09
 
 ### Added
+- 故障场景模型第一阶段（`docs/FAULT_SCENARIO_MODEL.md` +
+  `services/fault_scenario_service.py`）：JSON 配置 + 声明式规则，
+  支持场景注册、校验、匹配、信号计算、步骤判定、规则执行、置信度降级与
+  禁用根因词校验；配置目录 `configs/fault_scenarios/`。
+- 三个首批场景：`login.code_delivery`（登录验证码收不到）、
+  `payment.result_mismatch`（支付结果不一致）、`generic.triage`（通用兜底）。
+- 场景数据源：本地 `feedback` / `evidence` / `manual`；`connector` 通过可注入
+  的 `connector_provider` 预留，真实 ES / Prometheus 仍属阶段 2。
+- 单条诊断接入场景运行结果：诊断页新增「故障场景」卡片（命中场景、状态、
+  置信度、排查步骤表、缺失源、结论边界），Markdown 报告同步新增「故障场景」段；
+  场景动作合并进「下一步建议」。
+- 诊断页新增「已有请求级 Trace ID / Request ID」勾选项，驱动 `manual` 源；
+  `DiagnosisService.build()` 支持 `manual_answers`。
+- `FeedbackRepository.query_feedback()` 与 `EvidenceRepository.query_evidence()`
+  增加按产品、错误码、UID、服务、Trace / Request ID 与时间窗口过滤。
+- `docs/FUNCTIONAL_BOUNDARY_AUDIT.md`：现有代码与功能边界审计，区分真完成 /
+  未验证 / 初步实现 / 仅接口。
+- `tests/test_fault_scenario_service.py` 11 项回归，测试总数 137。
 - 周期性分析报告（Schema v6 `periodic_reports`，`PeriodicReportService` /
   `PeriodicReportRepository`）：按日期区间汇总反馈量、涉及用户、每日趋势、
   「产品 + 错误码」主要问题、无码现象词、报告沉淀与处理状态；
@@ -12,7 +30,7 @@
 - 周期报告显式写出统计口径与结论边界：只做汇总，不判断根因，不把簇当根因结论。
 - 证据上下文新增跨源统计（`by_type` / `by_connector` / `source_kinds`），
   「证据关联」结果页显示跨源分布。
-- `tests/test_periodic_report.py` 4 项回归，测试总数 126。
+- `tests/test_periodic_report.py` 4 项回归。
 
 ### Changed
 - Migration 升级到 v6；`tests/test_report_tracking.py` 的版本断言改为跟

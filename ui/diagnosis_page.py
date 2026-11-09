@@ -108,6 +108,19 @@ def render(db_path=None) -> None:
         help="同一反馈、同一内容不会重复归档。",
     )
 
+    selected_record = next(
+        (item for item in records if item["id"] == feedback_id), {}
+    )
+    trace_default = bool(
+        selected_record.get("trace_id") or selected_record.get("request_id")
+    )
+    has_trace = st.checkbox(
+        "已有请求级 Trace ID / Request ID",
+        value=trace_default,
+        key="diagnosis_has_trace",
+        help="故障场景会用它判断能否继续做请求级排查；没有就标为未验证。",
+    )
+
     if st.button("生成诊断", type="primary", key="diagnosis_run"):
         try:
             result = service.build(
@@ -116,6 +129,7 @@ def render(db_path=None) -> None:
                 window_minutes=window_minutes,
                 min_score=min_score,
                 use_llm=use_llm,
+                manual_answers={"trace_lookup": has_trace},
             )
         except LookupError as exc:
             st.error(str(exc))
@@ -160,6 +174,86 @@ def render(db_path=None) -> None:
     _render_result(result, st.session_state.get("diagnosis_meta") or {})
 
 
+def _render_scenario(scenario: dict) -> None:
+    """展示故障场景命中结果、排查清单与结论边界。"""
+
+    st.subheader("故障场景")
+    st.caption(
+        f"命中：{scenario.get('name')}（{scenario.get('scenario_id')} · "
+        f"{scenario.get('version')}）"
+    )
+
+    status_labels = {
+        "verified": "已验证",
+        "partial": "部分验证",
+        "blocked": "关键数据缺失",
+    }
+    confidence_labels = {
+        "high": "高",
+        "medium": "中",
+        "low": "低",
+    }
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("场景状态", status_labels.get(scenario.get("status"), scenario.get("status")))
+    c2.metric(
+        "场景置信度",
+        confidence_labels.get(scenario.get("confidence"), scenario.get("confidence")),
+    )
+    c3.metric("缺失数据源", len(scenario.get("missing_sources") or []))
+
+    reasons = (scenario.get("match") or {}).get("reasons") or []
+    if reasons:
+        st.caption("命中理由：" + "；".join(reasons))
+
+    step_labels = {
+        "pass": "通过",
+        "fail": "未通过",
+        "unknown": "未验证",
+        "skipped": "跳过",
+    }
+
+    rows = [
+        [
+            step.get("title"),
+            step_labels.get(step.get("status"), step.get("status")),
+            step.get("observation") or "—",
+            step.get("reason") or "—",
+        ]
+        for step in scenario.get("steps") or []
+    ]
+
+    if rows:
+        st.dataframe(
+            pd.DataFrame(rows, columns=["排查步骤", "状态", "观测值", "说明"]),
+            width="stretch",
+            hide_index=True,
+        )
+
+    hypotheses = scenario.get("hypotheses") or []
+    if hypotheses:
+        st.markdown("**场景假设（待验证）**")
+        for item in hypotheses:
+            confidence = confidence_labels.get(
+                item.get("confidence"), item.get("confidence")
+            )
+            st.caption(
+                f"置信度 {confidence}｜{item.get('statement')}"
+            )
+
+    missing = scenario.get("missing_sources") or []
+    if missing:
+        st.warning(
+            "缺失数据源："
+            + "、".join(item.get("id") or "" for item in missing)
+            + "。相关步骤未验证，结论已降级。"
+        )
+
+    limits = scenario.get("limits") or []
+    if limits:
+        st.caption("结论边界：" + "；".join(limits))
+
+
 def _render_result(result: dict, meta: dict) -> None:
     st.divider()
 
@@ -194,7 +288,10 @@ def _render_result(result: dict, meta: dict) -> None:
     if result.get("llm_error"):
         st.warning(result["llm_error"])
 
-    st.markdown(result["markdown"])
+    if result.get("scenario"):
+        _render_scenario(result["scenario"])
+
+    st.markdown(result.get("markdown_body") or result["markdown"])
 
     refs = result.get("evidence_refs") or []
 
