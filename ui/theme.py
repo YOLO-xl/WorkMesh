@@ -79,6 +79,31 @@ h1, h2, h3, h4 {
 }
 
 /* ---------- 顶部导航 ---------- */
+/* Streamlit 1.67 的展开动画会停在收起高度，展开后内容被 overflow 裁掉。
+   统一放开高度，展开器条目多时也不会出现「点了没反应」。 */
+div[data-testid="stExpander"] details[open] {
+    height: auto !important;
+    overflow: visible !important;
+}
+
+/* 报告正文用 Markdown 渲染，默认 H1 在窄屏会占满整屏；统一压到正文级标题。 */
+div[data-testid="stExpander"] [data-testid="stMarkdown"] h1 {
+    font-size: 1.3rem;
+    line-height: 1.35;
+    margin: 0.2rem 0 0.7rem;
+}
+div[data-testid="stExpander"] [data-testid="stMarkdown"] h2 {
+    font-size: 1.05rem;
+    line-height: 1.4;
+    margin: 0.9rem 0 0.45rem;
+}
+div[data-testid="stExpander"] [data-testid="stMarkdown"] h3,
+div[data-testid="stExpander"] [data-testid="stMarkdown"] p,
+div[data-testid="stExpander"] [data-testid="stMarkdown"] li {
+    font-size: 0.9rem;
+    line-height: 1.65;
+}
+
 /* 吸顶要挂在外层 stElementContainer 上：内层容器的高度只有自身高度，
    sticky 会被父级高度夹住而失效 */
 div[data-testid="stLayoutWrapper"]:has(div[class*="st-key-wm_topbar"]) {

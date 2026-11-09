@@ -36,6 +36,11 @@ MIGRATION_STEPS: tuple[MigrationStep, ...] = (
         description="统一证据模型与证据关联表",
         file_name="002_evidence_model.sql",
     ),
+    MigrationStep(
+        version=3,
+        description="诊断报告沉淀表",
+        file_name="003_diagnosis_reports.sql",
+    ),
 )
 
 CURRENT_VERSION = max(

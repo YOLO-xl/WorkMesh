@@ -15,9 +15,25 @@
   提及功能数，配现象/功能条形图与按现象下钻。
 - 100 条无错误码样例（`data/sample/feedback_sample_no_code.csv`）与回归测试。
 - `WORKMESH_DB_PATH` 环境变量可指定库文件，便于用样例库起演示实例。
+- 诊断报告中心（Schema v3 `diagnosis_reports`）：单条诊断自动 / 手动归档，
+  `ReportRepository` 提供保存（内容 hash 去重）、检索、详情、删除与统计。
+- 「报告中心」页面：报告指标、关键词与生成方式筛选、展开全文、下载 Markdown、
+  两步删除；同一页签「LLM 配置」管理接入。
+- LLM 配置双通道（`services/llm_config.py`）：环境变量优先、本机
+  `.workmesh/llm.local.json` 兜底；支持保存、测试连接、清除，文件 0600 原子写。
+- 诊断页新增「生成后自动归档到报告中心」与「保存到报告中心」入口。
+- `tests/test_report_center.py`：报告归档与 LLM 配置 9 项回归，测试总数 104。
 
 ### Changed
 - 无错误码的簇标题改为「产品 · 主导现象」；现象标签词表补充白屏、卡死、数据等。
+- 诊断服务读取 `resolve_settings()`：环境变量或本机文件任一可用即启用 LLM，
+  并暴露 `llm_source`（env / file / none / injected）。
+
+### Fixed
+- Streamlit 1.67 展开器偶发停在收起高度，点开报告看不到正文；统一放开
+  `details[open]` 高度并压缩报告正文标题字号。
+- 重新生成诊断时沿用上一次的归档提示（改为每次生成先重置归档状态）。
+- `.gitignore` 补充 `.workmesh/`，本机 LLM 凭据不会误提交。
 
 ## [0.5.0-dev] - 2026-11-09
 

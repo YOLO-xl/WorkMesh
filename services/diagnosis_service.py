@@ -16,6 +16,7 @@ from typing import Any, Callable, Optional
 
 from core.evidence import Evidence
 from services.evidence_service import TYPE_LABELS, EvidenceService
+from services.llm_config import resolve_settings
 
 
 CONFIDENCE_LABELS = {
@@ -57,11 +58,17 @@ class DiagnosisService:
     def llm_available(self) -> bool:
         if self._llm_client is not None:
             return True
-        return bool(os.environ.get("OPENAI_API_KEY"))
+        return resolve_settings().available
 
     @property
     def llm_model(self) -> str:
-        return os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+        return resolve_settings().model
+
+    @property
+    def llm_source(self) -> str:
+        if self._llm_client is not None:
+            return "injected"
+        return resolve_settings().source
 
     def _call_llm(self, prompt: str) -> str:
         if self._llm_client is not None:
@@ -69,10 +76,15 @@ class DiagnosisService:
 
         from openai import OpenAI  # 延迟导入，未配置时不增加启动成本
 
+        settings = resolve_settings()
+
+        if not settings.available:
+            raise RuntimeError("未配置 LLM API Key")
+
         client = OpenAI(
-            api_key=os.environ["OPENAI_API_KEY"],
-            base_url=os.environ.get("OPENAI_BASE_URL") or None,
-            timeout=float(os.environ.get("OPENAI_TIMEOUT", 30)),
+            api_key=settings.api_key,
+            base_url=settings.base_url or None,
+            timeout=settings.timeout,
         )
 
         response = client.chat.completions.create(
@@ -112,8 +124,8 @@ class DiagnosisService:
         if use_llm:
             if not self.llm_available:
                 result["llm_error"] = (
-                    "未配置 LLM：请设置环境变量 OPENAI_API_KEY、"
-                    "OPENAI_BASE_URL、OPENAI_MODEL 后重试。"
+                    "未配置 LLM：可在「报告中心 → LLM 配置」中填写，"
+                    "或设置环境变量 OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_MODEL。"
                 )
             else:
                 try:

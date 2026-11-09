@@ -23,6 +23,7 @@ from ui.analytics_page import render as render_analytics_page
 from ui.evidence_page import render as render_evidence_page
 from ui.cluster_page import render as render_cluster_page
 from ui.diagnosis_page import render as render_diagnosis_page
+from ui.report_page import render as render_report_page
 
 
 # 初始化数据库并创建 Repository
@@ -497,6 +498,11 @@ elif page == "反馈分析":
 # 单条诊断
 elif page == "单条诊断":
     render_diagnosis_page()
+
+
+# 报告中心
+elif page == "报告中心":
+    render_report_page()
 
 
 # 其他模块

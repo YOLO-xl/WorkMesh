@@ -6,6 +6,7 @@ import streamlit as st
 from core.correlation import DEFAULT_MIN_SCORE, DEFAULT_WINDOW_MINUTES
 from database.feedback_repository import FeedbackRepository
 from database.migration import initialize_database
+from database.report_repository import ReportRepository
 from services.diagnosis_service import DiagnosisService
 from services.evidence_service import EvidenceService
 from ui.theme import hero, section
@@ -89,13 +90,23 @@ def render(db_path=None) -> None:
             value=True,
             key="diagnosis_use_llm",
         )
-        st.caption(f"当前模型：{service.llm_model}")
+        st.caption(
+            f"当前模型：{service.llm_model}｜配置来源：{service.llm_source}"
+        )
     else:
         use_llm = False
         st.caption(
-            "未检测到 LLM 配置：设置 OPENAI_API_KEY / OPENAI_BASE_URL / "
-            "OPENAI_MODEL 后可用。当前使用规则诊断。"
+            "未检测到 LLM 配置：可在「报告中心 → LLM 配置」中填写，"
+            "或设置 OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_MODEL。"
+            "当前使用规则诊断。"
         )
+
+    auto_archive = st.checkbox(
+        "生成后自动归档到报告中心",
+        value=True,
+        key="diagnosis_auto_archive",
+        help="同一反馈、同一内容不会重复归档。",
+    )
 
     if st.button("生成诊断", type="primary", key="diagnosis_run"):
         try:
@@ -110,7 +121,35 @@ def render(db_path=None) -> None:
             st.error(str(exc))
             return
 
+        feedback = next(
+            (item for item in records if item["id"] == feedback_id), {}
+        )
+
         st.session_state["diagnosis_result"] = result
+        st.session_state["diagnosis_meta"] = {
+            "feedback": feedback,
+            "workspace_id": workspace_id,
+            "window_minutes": window_minutes,
+            "min_score": min_score,
+            "model": service.llm_model if result.get("generated_by") == "llm" else None,
+            "db_path": str(db_path) if db_path else None,
+        }
+
+        st.session_state["diagnosis_report"] = None
+
+        if auto_archive:
+            report_id, created = ReportRepository(db_path).save(
+                workspace_id,
+                feedback,
+                result,
+                model=st.session_state["diagnosis_meta"]["model"],
+                window_minutes=window_minutes,
+                min_score=min_score,
+            )
+            st.session_state["diagnosis_report"] = {
+                "id": report_id,
+                "created": created,
+            }
 
     result = st.session_state.get("diagnosis_result")
 
@@ -118,10 +157,10 @@ def render(db_path=None) -> None:
         st.caption("点击「生成诊断」开始分析。")
         return
 
-    _render_result(result)
+    _render_result(result, st.session_state.get("diagnosis_meta") or {})
 
 
-def _render_result(result: dict) -> None:
+def _render_result(result: dict, meta: dict) -> None:
     st.divider()
 
     severity = {
@@ -143,6 +182,14 @@ def _render_result(result: dict) -> None:
     c4.metric("上下文证据", result["context_counts"].get("context", 0))
 
     st.caption(f"生成方式：{generated}")
+
+    archived = st.session_state.get("diagnosis_report")
+    if archived:
+        st.caption(
+            "已归档到报告中心。"
+            if archived["created"]
+            else "该内容已存在于报告中心，未重复归档。"
+        )
 
     if result.get("llm_error"):
         st.warning(result["llm_error"])
@@ -167,9 +214,29 @@ def _render_result(result: dict) -> None:
                 hide_index=True,
             )
 
-    st.download_button(
-        "下载诊断报告（Markdown）",
-        data=result["markdown"].encode("utf-8"),
-        file_name="workmesh_diagnosis.md",
-        mime="text/markdown",
-    )
+    action_col, download_col = st.columns([1, 1.4])
+
+    with action_col:
+        if st.button("保存到报告中心", key="diagnosis_archive"):
+            feedback = meta.get("feedback") or {}
+            report_id, created = ReportRepository(meta.get("db_path")).save(
+                meta["workspace_id"],
+                feedback,
+                result,
+                model=meta.get("model"),
+                window_minutes=meta.get("window_minutes", 30),
+                min_score=meta.get("min_score", 30),
+            )
+            st.session_state["diagnosis_report"] = {
+                "id": report_id,
+                "created": created,
+            }
+            st.success("已归档，可在「报告中心」查看。" if created else "这份报告已经归档过了。")
+
+    with download_col:
+        st.download_button(
+            "下载诊断报告（Markdown）",
+            data=result["markdown"].encode("utf-8"),
+            file_name="workmesh_diagnosis.md",
+            mime="text/markdown",
+        )

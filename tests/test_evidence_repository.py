@@ -5,7 +5,11 @@ import pytest
 
 from core.evidence import Evidence
 from database.evidence_repository import EvidenceRepository
-from database.migration import CURRENT_VERSION, initialize_database
+from database.migration import (
+    CURRENT_VERSION,
+    MIGRATION_STEPS,
+    initialize_database,
+)
 
 
 def make_log(record_id="log-001", **overrides):
@@ -92,7 +96,7 @@ def test_migration_upgrades_existing_v1_database(tmp_path):
     finally:
         conn.close()
 
-    assert versions == [1, CURRENT_VERSION]
+    assert versions == [1] + [step.version for step in MIGRATION_STEPS]
 
 
 def test_insert_evidence_reuses_existing_record(repository):

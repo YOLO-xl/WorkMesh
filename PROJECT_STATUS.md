@@ -29,7 +29,7 @@ v0.6.0-dev
 - [x] 证据关联引擎（core/correlation.py）
 - [x] 证据表与关联表（Schema v2 Migration）
 - [x] EvidenceRepository 数据访问层
-- [x] 版本化 Migration 框架（v1 → v2 可增量升级）
+- [x] 版本化 Migration 框架（v1 → v3 可增量升级）
 - [x] 证据接入：本地 JSON / JSONL / CSV、Elasticsearch 日志
 - [x] 问题上下文生成：已验证事实 / 待验证假设分离
 - [x] 「证据关联」页面
@@ -37,7 +37,7 @@ v0.6.0-dev
 
 ## 已完成（数据与平台能力）
 - [x] SQLite 连接层（database/connection.py，支持 WORKMESH_DB_PATH 覆盖库路径）
-- [x] 版本化 Migration（v1 → v2）与证据表 / 关联表
+- [x] 版本化 Migration（v1 → v3）：证据表 / 关联表 / 诊断报告表
 - [x] FeedbackRepository / EvidenceRepository 数据访问层
 - [x] 数据持久化与字段标准化
 - [x] 导入批次管理与重复文件检测
@@ -47,18 +47,19 @@ v0.6.0-dev
 - [x] 问题聚类：有错误码按码归并，无错误码按现象 + 功能加权归并
 - [x] 反馈全景：现象分布、功能提及分布与按现象下钻
 - [x] 规则诊断 + 可选 LLM 诊断（引用校验，未配置 LLM 时自动退回规则）
+- [x] 诊断报告中心：归档 / 检索 / 下载 / 删除，内容 hash 去重
+- [x] LLM 配置双通道（环境变量优先 / 本机文件兜底）、连接测试与清除
 - [x] GitHub 仓库公开并持续推送（暂无版本 tag / release）
-- [x] 自动化测试 95 项
+- [x] 自动化测试 104 项
 
 ## 进行中
 - [ ] 真实 Elasticsearch / Prometheus 实例联调（本机暂无可访问环境）
-- [ ] LLM 诊断线上化（缺 OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_MODEL）
-- [ ] 报告中心页面（当前为占位）
+- [ ] 真实 LLM 凭据接入（配置与测试通道已就绪，当前未填真实 Key）
 
 ## 待完成
 - [ ] 后台导入任务与分块文件解析（当前整文件读入内存）
 - [ ] Jaeger / Tempo 链路追踪连接器
-- [ ] 分析报告沉淀（跨反馈、跨问题簇的周期性报告）
+- [ ] 分析报告沉淀扩展到跨反馈、跨问题簇的周期性报告（当前为单条诊断归档）
 - [ ] 聚类结果人工合并 / 拆分并写回标签
 - [ ] 按产品 + 7 天时间窗分块，支撑万级反馈增量归簇
 - [ ] embedding / 语义聚类增强

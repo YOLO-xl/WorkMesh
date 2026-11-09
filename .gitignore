@@ -17,3 +17,6 @@ htmlcov/
 # IDE
 .idea/
 .vscode/
+
+# 本机 LLM 凭据（报告中心 → LLM 配置会写入这里）
+.workmesh/
