@@ -1,4 +1,3 @@
-from datetime import datetime, timezone
 from typing import Any
 
 from elasticsearch import Elasticsearch
@@ -24,6 +23,8 @@ class ElasticsearchConnector(BaseConnector):
             raise ValueError("Elasticsearch 配置缺少 hosts")
 
         self.client = None
+        self.last_total = 0
+        self.last_aggregations: dict[str, Any] = {}
 
     def connect(self) -> None:
         options = {
@@ -87,6 +88,18 @@ class ElasticsearchConnector(BaseConnector):
             }
 
     def query(self, **kwargs: Any) -> list[dict[str, Any]]:
+        """执行查询并返回记录列表，保留兼容原有调用方。"""
+
+        return self.search(**kwargs)["records"]
+
+    def search(self, **kwargs: Any) -> dict[str, Any]:
+        """执行查询，返回记录、总数和聚合结果。
+
+        支持 uid / error_code / trace_id / request_id / service / level
+        的 term 过滤，支持 ``filters`` 额外条件、``search_after`` 分页、
+        ``aggs`` 聚合和 ``highlight``，并保留 ES 命中元数据。
+        """
+
         if self.client is None:
             raise RuntimeError("请先建立 Elasticsearch 连接")
 
@@ -94,72 +107,120 @@ class ElasticsearchConnector(BaseConnector):
         if not index:
             raise ValueError("查询必须指定 index")
 
-        filters = []
+        time_field = kwargs.get("time_field", "@timestamp")
+        filters = self._build_filters(kwargs, time_field)
+        keyword = kwargs.get("keyword")
+        if keyword:
+            filters.append({"query_string": {"query": keyword}})
 
-        uid = kwargs.get("uid")
-        if uid:
-            filters.append({"term": {"uid": uid}})
+        sort = kwargs.get("sort")
+        if not sort:
+            sort = [{time_field: {"order": "desc"}}]
+            if kwargs.get("search_after"):
+                # _id 默认不可排序，用 _doc 作为同时间戳下的翻页兜底。
+                sort.append({"_doc": "asc"})
+        size = min(max(int(kwargs.get("size", 100)), 0), 1000)
 
-        error_code = kwargs.get("error_code")
-        if error_code:
-            filters.append({"term": {"error_code": error_code}})
+        search_params: dict[str, Any] = {
+            "index": index,
+            "query": {"bool": {"filter": filters}},
+            "sort": sort,
+            "size": size,
+            "track_total_hits": True,
+        }
+
+        if kwargs.get("search_after"):
+            search_params["search_after"] = kwargs["search_after"]
+        if kwargs.get("aggs"):
+            search_params["aggs"] = kwargs["aggs"]
+        if kwargs.get("highlight"):
+            search_params["highlight"] = kwargs["highlight"]
+
+        response = self.client.search(**search_params)
+        hits = response.get("hits", {}).get("hits", [])
+
+        self.last_total = self._extract_total(response.get("hits", {}))
+        self.last_aggregations = response.get("aggregations") or {}
+
+        records = [
+            {
+                "id": hit.get("_id"),
+                "index": hit.get("_index"),
+                "score": hit.get("_score"),
+                "sort": hit.get("sort"),
+                "highlight": hit.get("highlight"),
+                "source": hit.get("_source", {}),
+            }
+            for hit in hits
+        ]
+
+        return {
+            "records": records,
+            "total": self.last_total,
+            "aggregations": self.last_aggregations,
+        }
+
+    def _build_filters(
+        self,
+        kwargs: dict[str, Any],
+        time_field: str,
+    ) -> list[dict[str, Any]]:
+        """组装 ES filter 子句，避免把任意 DSL 直接透传给查询层。"""
+
+        filters: list[dict[str, Any]] = []
+
+        for field in (
+            "uid",
+            "error_code",
+            "trace_id",
+            "request_id",
+            "service",
+            "level",
+        ):
+            value = kwargs.get(field)
+            if value:
+                filters.append({"term": {field: value}})
 
         start_time = kwargs.get("start_time")
         end_time = kwargs.get("end_time")
-
         if start_time or end_time:
             time_range = {}
             if start_time:
                 time_range["gte"] = start_time
             if end_time:
                 time_range["lte"] = end_time
+            filters.append({"range": {time_field: time_range}})
 
-            filters.append({
-                "range": {
-                    kwargs.get("time_field", "@timestamp"): time_range
-                }
-            })
+        extra = kwargs.get("filters")
+        if isinstance(extra, list):
+            filters.extend(extra)
+        elif isinstance(extra, dict):
+            for field, value in extra.items():
+                if value in (None, ""):
+                    continue
+                if isinstance(value, (list, tuple, set)):
+                    values = [item for item in value if item not in (None, "")]
+                    if values:
+                        filters.append({"terms": {field: values}})
+                elif isinstance(value, dict):
+                    if any(key in value for key in ("gte", "lte", "gt", "lt")):
+                        filters.append({"range": {field: value}})
+                    else:
+                        filters.append({"term": {field: value}})
+                else:
+                    filters.append({"term": {field: value}})
 
-        keyword = kwargs.get("keyword")
-        if keyword:
-            filters.append({
-                "query_string": {
-                    "query": keyword
-                }
-            })
+        return filters
 
-        body = {
-            "query": {
-                "bool": {
-                    "filter": filters
-                }
-            },
-            "sort": [
-                {
-                    kwargs.get("time_field", "@timestamp"): {
-                        "order": "desc"
-                    }
-                }
-            ],
-        }
-
-        response = self.client.search(
-            index=index,
-            query=body["query"],
-            sort=body["sort"],
-            size=min(max(int(kwargs.get("size", 100)), 1), 1000),
-        )
-
-        hits = response.get("hits", {}).get("hits", [])
-
-        return [
-            {
-                "id": hit.get("_id"),
-                "index": hit.get("_index"),
-                "source": hit.get("_source", {}),
-            }
-            for hit in hits
-        ]
+    @staticmethod
+    def _extract_total(hits: dict[str, Any]) -> int:
+        total = hits.get("total")
+        if isinstance(total, dict):
+            return int(total.get("value") or 0)
+        try:
+            return int(total or 0)
+        except (TypeError, ValueError):
+            return 0
 
     def normalize(
         self,
@@ -169,12 +230,16 @@ class ElasticsearchConnector(BaseConnector):
 
         for record in records:
             source = record.get("source", {})
+            attributes = {}
+            for key in ("index", "score", "sort", "highlight"):
+                if record.get(key) not in (None, "", []):
+                    attributes[key] = record.get(key)
 
             normalized.append({
                 "evidence_type": "log",
                 "connector_type": self.connector_type,
-                "record_id": record.get("id"),
-                "timestamp": source.get("@timestamp"),
+                "record_id": source.get("record_id") or record.get("id"),
+                "timestamp": source.get("@timestamp") or source.get("timestamp"),
                 "uid": source.get("uid"),
                 "request_id": source.get("request_id"),
                 "trace_id": source.get("trace_id"),
@@ -182,6 +247,7 @@ class ElasticsearchConnector(BaseConnector):
                 "level": source.get("level"),
                 "error_code": source.get("error_code"),
                 "message": source.get("message"),
+                "attributes": attributes,
                 "raw_data": source,
             })
 

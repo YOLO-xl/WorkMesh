@@ -2,7 +2,7 @@
 
 > 面向企业技术支持与生产问题排查的 AI 工作台。
 >
-> 当前版本：`v0.7.0-dev` · 7 个功能页面 · 144 项自动化测试
+> 当前版本：`v0.7.0-dev` · 8 个功能页面 · 152 项自动化测试
 
 WorkMesh 把用户反馈、日志、指标和变更记录收敛到同一套 Evidence 模型，围绕一条反馈完成证据关联、故障场景判定、诊断报告归档和原始记录追溯。
 
@@ -25,6 +25,7 @@ WorkMesh 把用户反馈、日志、指标和变更记录收敛到同一套 Evid
 | 反馈分析 | 趋势观察 | 产品、版本、平台、错误码分布与反馈全景 |
 | 单条诊断 | 结论层 | 单条反馈生成带证据引用的诊断报告 |
 | 故障排查 | 流程层 | 反馈接入 → 多系统查询 → 证据关联 → 场景判定 → 结论与追溯 |
+| 故障场景 | 运营层 | 场景库、启用状态、单条试跑、覆盖率 / 阻塞率统计；可注入真实 ES / Prometheus |
 | 报告中心 | 沉淀与闭环 | 诊断 / 簇 / 周期报告归档、检索、下载与删除；诊断 / 簇报告支持处理状态；同页配置 LLM |
 
 页面支持深链接：`?page=问题聚类` 直接进入模块，`?view=home` 返回首页。
@@ -41,9 +42,9 @@ WorkMesh 把用户反馈、日志、指标和变更记录收敛到同一套 Evid
 | CSV / Excel 导入 | 已完成 | 字段自动识别、手动映射、标准化预览、质量检查 |
 | SQLite 持久化 | 已完成 | Repository 分层，Schema v1 → v6 增量迁移 |
 | 导入批次管理 | 已完成 | 批次记录、重复文件检测、标准 CSV 下载 |
-| Elasticsearch 日志连接器 | 部分完成 | 查询 / 归一化 / mock 传输测试已完成，未接真实实例 |
-| Prometheus 指标连接器 | 部分完成 | 样例指标接入与离线传输测试已完成，未接真实实例 |
-| 跨系统查询服务 | 部分完成 | 本地反馈 + 本地证据 + 可选 ES / Prometheus；外部源失败保留 `available:false`，不伪造数据 |
+| Elasticsearch 日志连接器 | 已完成 | 已对接本地 ES 9.1.0：term 过滤、时间窗、关键词、`search_after` 翻页、aggregations、highlight 与元数据保留；真实样例查询通过 |
+| Prometheus 指标连接器 | 已完成 | 已对接本地 Prometheus 2.55.1：instant/range 查询、指标归一化与标签清洗；真实样例查询通过 |
+| 跨系统查询服务 | 已完成 | 本地反馈 + 本地证据 + 真实 ES / Prometheus 联合查询；按连接器区分时间窗，外部源失败保留 `available:false`，不伪造数据 |
 
 ### 证据与诊断
 
@@ -62,12 +63,14 @@ WorkMesh 把用户反馈、日志、指标和变更记录收敛到同一套 Evid
 | 能力 | 状态 | 说明 |
 | --- | --- | --- |
 | 故障场景模型 | 已完成 | JSON 配置匹配条件、数据源、信号、排查步骤、规则与结论边界 |
-| 首批四个场景 | 已完成 | 登录验证码收不到、直播进入房间失败、支付结果不一致、通用兜底 |
+| 首批五个场景 | 已完成 | 登录验证码收不到、直播进入房间失败、支付结果不一致、退款进度咨询（E6003）、通用兜底 |
+| 场景运营页 | 已完成 | 场景库展开看配置、单条反馈试跑、最近 50/100/500 条批量评估、命中 / 验证 / 部分 / 阻塞统计 |
+| 场景外部连接器 | 已完成 | 场景页可勾选并填写 ES / Prometheus 地址，按场景 `connector` source 真实取数；不勾选只走本地数据 |
 | 场景执行结果 | 已完成 | 命中理由、排查步骤、缺失源、置信度降级、事实 / 假设 / 动作 |
 | 故障排查五段链路 | 已完成 | 反馈接入 → 多系统查询 → 证据关联 → 场景判定 → 结论与追溯 |
 | 内置样例 F001 | 已完成 | `live.enter_room_failure`，`verified` / `medium`，结论证据全部可追溯 |
 | 原始证据追溯 | 已完成 | 证据链回看 evidence ID、原始 JSON、来源信息与数据库记录 |
-| 外部数据源接入 | 部分完成 | 页面可填 ES / Prometheus 地址参与查询；本机无真实实例 |
+| 外部数据源接入 | 已完成 | 故障排查页与故障场景页均可填真实 ES / Prometheus 地址；本地 Docker 环境已完成联调 |
 
 ### 聚类、报告与处理闭环
 
@@ -87,7 +90,7 @@ WorkMesh 把用户反馈、日志、指标和变更记录收敛到同一套 Evid
 
 | 能力 | 状态 | 说明 |
 | --- | --- | --- |
-| 自动化测试 | 已完成 | 当前 `144 passed`，覆盖数据、关联、场景、查询、排查、报告 |
+| 自动化测试 | 已完成 | 当前 `152 passed`，覆盖数据、关联、场景、查询、排查、场景运营、报告 |
 | 数据库迁移 | 已完成 | v6；迁移只在显式初始化时执行 |
 | 文档与审计 | 已完成 | 架构、数据模型、证据模型、场景模型、功能边界、路线图 |
 
@@ -97,8 +100,10 @@ WorkMesh 把用户反馈、日志、指标和变更记录收敛到同一套 Evid
 
 | 边界 | 当前状态 |
 | --- | --- |
-| 真实 Elasticsearch / Prometheus | 本机没有可访问实例；连接器只用样例和 mock 传输验证 |
-| ES 查询能力 | 支持 index / uid / error_code / 时间 / 关键词 / size；暂无 Trace / Request / Service term 过滤、分页、aggregations，未保留 `_index` / `_id` / `_score` / highlight |
+| 真实 Elasticsearch / Prometheus | 已在本地 Docker 完成 ES 9.1.0 / Prometheus 2.55.1 联调；生产环境的认证、TLS、字段映射与脱敏审计仍未做 |
+| ES 查询能力 | 已支持 uid / error_code / trace_id / request_id / service / level term 过滤、时间窗、关键词、`search_after` 翻页、aggregations、highlight，并保留 `_index` / `_id` / `_score`；暂无任意 DSL 透传 |
+| Prometheus 历史时间窗 | Prometheus 会拒收明显偏历史或偏未来的显式样本；连接器默认查当前态，历史窗口需由 `use_window` 显式开启 |
+| 场景统计口径 | 覆盖率 / blocked 率只在「故障场景」页批量评估中提供，尚未写回簇报告与周期报告；跨来源同一条日志暂不归并 |
 | 其他可观测系统 | OpenSearch、Loki、Jaeger、Tempo 尚未接入 |
 | LLM 评测 | 已验证 DeepSeek 单模型；暂无多模型对比、提示词评测、限流重试与成本控制 |
 | 证据关联 | 只基于标识与时间窗口，不做语义相似度 |
@@ -108,10 +113,10 @@ WorkMesh 把用户反馈、日志、指标和变更记录收敛到同一套 Evid
 
 ## 下一步
 
-- 用真实 Elasticsearch / Prometheus 实例联调，校准关联阈值与权重。
-- 补齐 ES 的 Trace / Request / Service term 过滤、分页、aggregations 与原始字段保留；接入 OpenSearch、Loki。
+- 把本地联调环境参数化（认证 / TLS / 索引模板 / 脱敏），支持接入真实生产集群。
+- 接入 OpenSearch、Loki，并为 Prometheus 历史窗口补长期存储方案。
 - 接入 Jaeger / Tempo 链路追踪。
-- 故障场景阶段 2：场景命中率 / blocked 率统计，补齐历史报告与知识库数据源。
+- 把场景命中率 / blocked 率接入簇报告与周期报告，补齐 `report_history` / `knowledge` 数据源。
 - LLM 多模型对比、提示词评测、失败重试与成本控制。
 - 大文件分块读取与后台导入任务。
 
@@ -174,8 +179,8 @@ pytest -q
 4. 可选：展开「外部数据源（可选）」，填 Elasticsearch / Prometheus 地址后重跑；
    连接失败会显示「不可用」，不会用本地数据补齐。
 
-> 当前环境没有可访问的真实 ES / Prometheus 实例，内置样例只验证本地链路；
-> 外部源查询代码已接通，真实联调仍是下一阶段。
+> 本机可用 Docker 起 ES 9.1.0 与 Prometheus 2.55.1，真实联调已跑通；
+> 生产集群仍需补认证、TLS、字段映射与访问审计。
 
 ### 3. 问题聚类
 
@@ -198,6 +203,14 @@ pytest -q
    报告会汇总影响面、现象分布与共性证据，归档到「报告中心 → 簇报告」，并可对比上一份快照。
 
 设计说明见 `docs/EVIDENCE_MODEL.md`，诊断口径见 `services/diagnosis_service.py` 顶部注释。
+
+### 5. 故障场景运营
+
+1. 进入「故障场景」，首屏看启用场景、配置错误、外部连接器场景三个指标。
+2. 展开「外部连接器（可选）」并勾选后，填 ES（默认 `http://localhost:9200`）与 Prometheus（默认 `http://localhost:9091`），场景评估会按 `connector` source 真实取数。
+3. 「覆盖评估」选择最近 50 / 100 / 500 条，点「评估场景覆盖」：看覆盖率、已验证、部分完成、阻塞与具体场景验证率。
+4. 下方「单条试跑」选一条反馈，看命中场景、匹配理由、排查步骤、缺失源和下一步动作。
+5. 不勾选外部连接器时，只使用本地反馈与已入库证据；外部源缺失会标为「未验证」，不补造数据。
 
 ## 设计原则
 
@@ -222,4 +235,4 @@ pytest -q
 
 ## 项目状态
 
-当前为 `v0.7.0-dev`：数据接入、证据关联、问题聚类、单条诊断、故障排查、报告中心的主链路已在本地跑通。真实 Elasticsearch / Prometheus 联调、OpenSearch / Loki / Jaeger / Tempo、LLM 提示词评测和大文件后台导入仍待推进，详见 [`PROJECT_STATUS.md`](PROJECT_STATUS.md) 与 [`docs/ROADMAP.md`](docs/ROADMAP.md)。
+当前为 `v0.7.0-dev`：数据接入、证据关联、问题聚类、单条诊断、故障排查、故障场景运营、报告中心的主链路已在本地跑通；本地 Docker 已完成真实 Elasticsearch / Prometheus 联调。OpenSearch / Loki / Jaeger / Tempo、生产集群认证与审计、LLM 提示词评测和大文件后台导入仍待推进，详见 [`PROJECT_STATUS.md`](PROJECT_STATUS.md) 与 [`docs/ROADMAP.md`](docs/ROADMAP.md)。

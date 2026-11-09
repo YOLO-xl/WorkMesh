@@ -254,16 +254,25 @@ class MultiSourceQueryService:
                 raise RuntimeError(test.get("message") or "连接测试失败")
 
             query_args = dict(spec.get("query") or {})
-            for key in ("uid", "error_code", "keyword", "start", "end", "limit"):
+            for key in ("uid", "error_code", "keyword", "limit"):
                 if filters.get(key) and key not in query_args:
                     query_args[key] = filters[key]
 
             if connector_type == "elasticsearch":
-                if "start" in query_args:
-                    query_args["start_time"] = query_args.pop("start")
-                if "end" in query_args:
-                    query_args["end_time"] = query_args.pop("end")
+                if filters.get("start") and "start_time" not in query_args:
+                    query_args["start_time"] = filters["start"]
+                if filters.get("end") and "end_time" not in query_args:
+                    query_args["end_time"] = filters["end"]
+                query_args.pop("start", None)
+                query_args.pop("end", None)
                 query_args.setdefault("size", _clamp_limit(filters.get("limit")))
+            elif connector_type == "prometheus":
+                # Prometheus 的即时查询默认取当前态，不强行套反馈的历史窗口；
+                # 需要历史区间时由 spec.query 显式传 use_window=true 或 start/end。
+                use_window = bool(query_args.pop("use_window", False))
+                if use_window:
+                    query_args.setdefault("start", filters.get("start"))
+                    query_args.setdefault("end", filters.get("end"))
 
             raw_records = connector.query(**query_args)
             normalized = connector.normalize(raw_records)

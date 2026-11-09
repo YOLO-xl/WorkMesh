@@ -67,6 +67,15 @@ MODULES = [
         "page": "故障排查",
     },
     {
+        "key": "scenarios",
+        "name": "故障场景",
+        "icon": "cluster",
+        "group": "core",
+        "desc": "把故障排查沉淀为可运营的场景库，看覆盖、命中与阻塞。",
+        "tags": ["场景库", "覆盖率", "阻塞率"],
+        "page": "故障场景",
+    },
+    {
         "key": "analytics",
         "name": "反馈分析",
         "icon": "chart",
@@ -215,6 +224,7 @@ def _status_map(
         "cluster": f"<b>{cluster_stats['cluster_count']}</b> 个问题簇 · 覆盖 {cluster_stats['coverage'] * 100:.0f}%",
         "diagnosis": "规则诊断可用" + ("" if llm_ready else " · LLM 未配置"),
         "troubleshooting": "内置样例 F001 · 证据链可追溯",
+        "scenarios": "场景库 · 覆盖评估可用",
         "analytics": f"<b>{overview['unique_users']}</b> 位用户 · {overview['unique_products']} 个产品",
         "reports": "规划中 · 暂无报告",
     }

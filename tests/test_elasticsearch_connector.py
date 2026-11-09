@@ -142,3 +142,99 @@ def test_connector_registered_and_creatable():
     )
 
     assert isinstance(connector, ElasticsearchConnector)
+
+
+class RichSearchClient:
+    def __init__(self):
+        self.search_params = None
+
+    def search(self, **kwargs):
+        self.search_params = kwargs
+        return {
+            "hits": {
+                "total": {"value": 12, "relation": "eq"},
+                "hits": [
+                    {
+                        "_id": "log-001",
+                        "_index": "app-logs",
+                        "_score": 1.2,
+                        "sort": [1790000000000, 3],
+                        "_source": {
+                            "@timestamp": "2026-11-03T14:32:00Z",
+                            "record_id": "log-001",
+                            "uid": "user-001",
+                            "service": "live-service",
+                            "message": "直播间初始化失败",
+                        },
+                        "highlight": {"message": ["<em>直播间</em>初始化失败"]},
+                    }
+                ],
+            },
+            "aggregations": {
+                "by_service": {
+                    "buckets": [{"key": "live-service", "doc_count": 12}]
+                }
+            },
+        }
+
+
+def test_search_supports_filters_pagination_aggs_and_metadata():
+    connector = ElasticsearchConnector({
+        "hosts": ["http://localhost:9200"],
+        "index": "app-logs",
+    })
+    mock_client = RichSearchClient()
+    connector.client = mock_client
+
+    result = connector.search(
+        filters={
+            "service": "live-service",
+            "uid": ["user-001", "user-002"],
+            "@timestamp": {"gte": "2026-11-03T14:00:00Z"},
+        },
+        search_after=[1790000000000, 3],
+        aggs={"by_service": {"terms": {"field": "service"}}},
+        highlight={"fields": {"message": {}}},
+        size=2,
+    )
+
+    params = mock_client.search_params
+    assert params["index"] == "app-logs"
+    assert params["size"] == 2
+    assert params["track_total_hits"] is True
+    assert params["search_after"] == [1790000000000, 3]
+    assert params["sort"] == [
+        {"@timestamp": {"order": "desc"}},
+        {"_doc": "asc"},
+    ]
+    assert {"terms": {"uid": ["user-001", "user-002"]}} in params["query"]["bool"]["filter"]
+    assert {"range": {"@timestamp": {"gte": "2026-11-03T14:00:00Z"}}} in params["query"]["bool"]["filter"]
+    assert params["aggs"] == {"by_service": {"terms": {"field": "service"}}}
+    assert params["highlight"] == {"fields": {"message": {}}}
+
+    assert result["total"] == 12
+    assert result["aggregations"]["by_service"]["buckets"][0]["key"] == "live-service"
+    assert result["records"][0]["score"] == 1.2
+    assert result["records"][0]["sort"] == [1790000000000, 3]
+    assert result["records"][0]["highlight"]["message"][0].startswith("<em>")
+
+    normalized = connector.normalize(result["records"])
+    assert normalized[0]["record_id"] == "log-001"
+    assert normalized[0]["attributes"]["index"] == "app-logs"
+    assert normalized[0]["attributes"]["sort"] == [1790000000000, 3]
+    assert normalized[0]["attributes"]["highlight"]["message"][0].startswith("<em>")
+
+
+def test_search_allows_zero_size_for_aggregation_only_query():
+    connector = ElasticsearchConnector({
+        "hosts": ["http://localhost:9200"],
+        "index": "app-logs",
+    })
+    mock_client = RichSearchClient()
+    connector.client = mock_client
+
+    result = connector.search(size=0, aggs={"by_service": {"terms": {"field": "service"}}})
+
+    assert mock_client.search_params["size"] == 0
+    assert result["total"] == 12
+    assert result["aggregations"]["by_service"]["buckets"][0]["key"] == "live-service"

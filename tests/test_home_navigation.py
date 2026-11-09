@@ -13,6 +13,7 @@ def test_modules_cover_all_pages() -> None:
         "反馈分析",
         "单条诊断",
         "故障排查",
+        "故障场景",
         "报告中心",
     }
 

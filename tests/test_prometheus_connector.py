@@ -189,3 +189,31 @@ def test_normalize_prefers_service_label_over_job():
 
     assert all(item["service"] == "live-service" for item in normalized)
     assert len({item["record_id"] for item in normalized}) == len(normalized)
+
+
+def test_normalize_prefers_exported_job_before_scrape_job():
+    connector, _ = make_connector({})
+    payload = {
+        "status": "success",
+        "data": {
+            "resultType": "vector",
+            "result": [
+                {
+                    "metric": {
+                        "__name__": "live_player_init_fail_rate",
+                        "service": "直播SDK",
+                        "job": "workmesh-local",
+                        "exported_job": "live-sdk",
+                    },
+                    "value": [1793524560.0, "0.182"],
+                }
+            ],
+        },
+    }
+    records = connector._parse_result(payload, "live_player_init_fail_rate")
+
+    normalized = connector.normalize(records)
+
+    assert normalized[0]["service"] == "直播SDK"
+    assert normalized[0]["attributes"]["metric_value"] == 0.182
+    assert normalized[0]["attributes"]["labels"]["exported_job"] == "live-sdk"

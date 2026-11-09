@@ -1,0 +1,361 @@
+{
+  "schema_version": 1,
+  "id": "payment.refund_consultation",
+  "name": "退款进度咨询",
+  "version": "2026.11",
+  "owner": "feedback-platform",
+  "priority": 72,
+  "enabled": true,
+  "effective_from": "2026-11-01",
+  "tags": [
+    "支付",
+    "退款",
+    "到账"
+  ],
+  "match": {
+    "products": [
+      "支付中心"
+    ],
+    "error_codes": [
+      "E6003"
+    ],
+    "keywords_any": [
+      "退款",
+      "到账",
+      "退回",
+      "处理中",
+      "银行卡"
+    ],
+    "symptoms_any": [
+      "退款未到账",
+      "退款处理中",
+      "订单状态未更新"
+    ],
+    "features_any": [
+      "退款",
+      "订单",
+      "支付"
+    ],
+    "exclude_keywords": [
+      "不想退款"
+    ]
+  },
+  "sources": [
+    {
+      "id": "feedback_recent",
+      "kind": "feedback",
+      "required": true,
+      "window_minutes": 1440,
+      "limit": 200,
+      "description": "同产品同错误码的退款反馈",
+      "query": {
+        "products": [
+          "支付中心"
+        ],
+        "error_codes": [
+          "E6003"
+        ],
+        "limit": 200
+      }
+    },
+    {
+      "id": "refund_logs",
+      "kind": "connector",
+      "connector_type": "elasticsearch",
+      "required": false,
+      "window_minutes": 1440,
+      "limit": 200,
+      "description": "同 UID 的退款网关日志",
+      "query": {
+        "index": "app-refund-*",
+        "time_field": "@timestamp",
+        "filters": {
+          "service": "payment-gateway",
+          "uid": "{{anchor.uid}}",
+          "error_code": "{{anchor.error_code}}"
+        },
+        "size": 200
+      }
+    },
+    {
+      "id": "refund_metrics",
+      "kind": "connector",
+      "connector_type": "prometheus",
+      "required": false,
+      "description": "退款待处理量指标",
+      "query": {
+        "promql": "sum(payment_refund_pending_total)",
+        "use_window": false
+      }
+    }
+  ],
+  "signals": [
+    {
+      "id": "recent_feedback_count",
+      "source": "feedback_recent",
+      "kind": "count"
+    },
+    {
+      "id": "same_uid_log_count",
+      "source": "refund_logs",
+      "kind": "count"
+    },
+    {
+      "id": "log_trace_count",
+      "source": "refund_logs",
+      "kind": "distinct_count",
+      "field": "trace_id"
+    },
+    {
+      "id": "refund_pending_total",
+      "source": "refund_metrics",
+      "kind": "max",
+      "field": "attributes.metric_value"
+    },
+    {
+      "id": "refund_pending_flag",
+      "kind": "threshold_flag",
+      "signal": "refund_pending_total",
+      "op": "gte",
+      "value": 1
+    }
+  ],
+  "steps": [
+    {
+      "id": "confirm_scope",
+      "title": "确认退款反馈面",
+      "uses": [
+        "feedback_recent"
+      ],
+      "observe": "recent_feedback_count",
+      "criteria": {
+        "pass": {
+          "signal": "recent_feedback_count",
+          "op": "gte",
+          "value": 3
+        },
+        "fail": {
+          "signal": "recent_feedback_count",
+          "op": "lt",
+          "value": 3
+        }
+      },
+      "on_missing": "mark_unverified",
+      "guidance": "同产品同错误码达到 3 条时，先按面上的退款链路排查；少于 3 条按单笔订单处理。"
+    },
+    {
+      "id": "check_uid_logs",
+      "title": "查同 UID 退款日志",
+      "uses": [
+        "refund_logs"
+      ],
+      "observe": "same_uid_log_count",
+      "criteria": {
+        "pass": {
+          "signal": "same_uid_log_count",
+          "op": "gte",
+          "value": 1
+        },
+        "fail": {
+          "signal": "same_uid_log_count",
+          "op": "eq",
+          "value": 0
+        }
+      },
+      "on_missing": "mark_unverified",
+      "guidance": "有同 UID 日志时，按退款单号核对申请、渠道受理、渠道终态三个节点。"
+    },
+    {
+      "id": "check_trace",
+      "title": "确认退款 Trace",
+      "uses": [
+        "refund_logs"
+      ],
+      "observe": "log_trace_count",
+      "criteria": {
+        "pass": {
+          "signal": "log_trace_count",
+          "op": "gte",
+          "value": 1
+        },
+        "fail": {
+          "signal": "log_trace_count",
+          "op": "eq",
+          "value": 0
+        }
+      },
+      "on_missing": "mark_unverified",
+      "guidance": "有 Trace 时继续看渠道回调；没有 Trace 时结论只能停在退款链路方向。"
+    },
+    {
+      "id": "check_pending",
+      "title": "核对退款待处理量",
+      "uses": [
+        "refund_metrics"
+      ],
+      "observe": "refund_pending_total",
+      "criteria": {
+        "pass": {
+          "signal": "refund_pending_total",
+          "op": "lt",
+          "value": 1
+        },
+        "fail": {
+          "signal": "refund_pending_total",
+          "op": "gte",
+          "value": 1
+        }
+      },
+      "on_missing": "mark_unverified",
+      "guidance": "待处理量升高时优先排查渠道受理与回调延迟；指标正常时回到单笔退款单。"
+    }
+  ],
+  "rules": [
+    {
+      "id": "refund_log_pending",
+      "priority": 30,
+      "when": {
+        "all": [
+          {
+            "signal": "recent_feedback_count",
+            "op": "gte",
+            "value": 3
+          },
+          {
+            "signal": "same_uid_log_count",
+            "op": "gte",
+            "value": 1
+          }
+        ]
+      },
+      "requires": [
+        "refund_logs"
+      ],
+      "then": {
+        "type": "hypothesis",
+        "statement": "退款反馈集中，且同 UID 在支付网关有退款日志；需要继续核对退款单在渠道侧的受理与终态。",
+        "confidence": "medium",
+        "evidence_refs": [
+          "S:feedback_recent.recent_feedback_count",
+          "S:refund_logs.same_uid_log_count"
+        ]
+      },
+      "actions": [
+        "按退款单号核对申请时间、渠道受理时间和渠道终态",
+        "拉取同 UID 的退款回调与重试记录",
+        "确认客户端展示的是退款进度还是订单状态"
+      ]
+    },
+    {
+      "id": "refund_backlog",
+      "priority": 25,
+      "when": {
+        "all": [
+          {
+            "signal": "refund_pending_flag",
+            "op": "eq",
+            "value": true
+          },
+          {
+            "signal": "same_uid_log_count",
+            "op": "gte",
+            "value": 1
+          }
+        ]
+      },
+      "requires": [
+        "refund_metrics",
+        "refund_logs"
+      ],
+      "then": {
+        "type": "hypothesis",
+        "statement": "退款待处理量与同 UID 日志同时存在，可能是渠道受理慢或回调补偿延迟，暂不能判定具体单点。",
+        "confidence": "medium",
+        "evidence_refs": [
+          "S:refund_metrics.refund_pending_total",
+          "S:refund_logs.same_uid_log_count"
+        ]
+      },
+      "actions": [
+        "按渠道拆分退款待处理量，确认是否集中在单一渠道",
+        "核对退款回调补偿任务与对账任务",
+        "抽查最近 5 笔退款单的渠道终态"
+      ]
+    },
+    {
+      "id": "refund_surface_backlog",
+      "priority": 28,
+      "when": {
+        "all": [
+          {
+            "signal": "recent_feedback_count",
+            "op": "gte",
+            "value": 3
+          },
+          {
+            "signal": "refund_pending_flag",
+            "op": "eq",
+            "value": true
+          }
+        ]
+      },
+      "requires": [
+        "feedback_recent",
+        "refund_metrics"
+      ],
+      "then": {
+        "type": "hypothesis",
+        "statement": "退款反馈面达到 7 条，且退款待处理量高于 0，存在面上退款积压信号；需要按渠道拆分后再判断单笔到账。",
+        "confidence": "medium",
+        "evidence_refs": [
+          "S:feedback_recent.recent_feedback_count",
+          "S:refund_metrics.refund_pending_total"
+        ]
+      },
+      "actions": [
+        "按渠道拆分退款待处理量",
+        "核对退款回调补偿与对账任务",
+        "抽查最近 5 笔退款单的渠道终态"
+      ]
+    },
+    {
+      "id": "no_external_data",
+      "priority": 10,
+      "when": {
+        "all": [
+          {
+            "signal": "same_uid_log_count",
+            "op": "is_null"
+          },
+          {
+            "signal": "refund_pending_total",
+            "op": "is_null"
+          }
+        ]
+      },
+      "then": {
+        "type": "action",
+        "statement": "当前只有反馈面数据，没有退款网关日志和待处理量指标，不能判断是单笔还是面上问题。",
+        "confidence": "low",
+        "evidence_refs": [
+          "S:feedback_recent.recent_feedback_count"
+        ]
+      },
+      "actions": [
+        "补同 UID 的退款网关日志或退款单号",
+        "补退款待处理量指标",
+        "先按退款单号人工核对渠道受理与到账状态"
+      ]
+    }
+  ],
+  "output_policy": {
+    "max_confidence_without_trace": "medium",
+    "forbid_root_cause": true,
+    "min_evidence_refs_for_hypothesis": 1,
+    "require_any_of_sources": [
+      "refund_logs",
+      "refund_metrics"
+    ],
+    "disclaimer": "没有退款单级流水和 Trace 时，结论只能定位到退款链路方向，不能判定具体到账结果。"
+  }
+}

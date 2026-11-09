@@ -40,22 +40,26 @@ WorkMesh 是面向企业技术支持与生产问题排查场景的 AI 工作台�
 - [x] 场景对象模型、配置格式、校验规则与输出契约（`docs/FAULT_SCENARIO_MODEL.md`）。
 - [x] 场景注册 / 校验 / 匹配 / 信号计算 / 步骤判定 / 规则执行（`services/fault_scenario_service.py`）。
 - [x] 本地 `feedback` / `evidence` / `manual` 三类数据源。
-- [x] 首批四个场景：登录验证码、直播进入房间失败、支付结果不一致、通用兜底。
+- [x] 首批五个场景：登录验证码、直播进入房间失败、支付结果不一致、退款进度咨询、通用兜底。
 - [x] 直播进入房间失败内置样例 F001：多系统查询 + 证据链 + 场景判定 +
       原始追溯，端到端 `verified` / `medium`。
 - [x] 跨系统查询服务（本地反馈 + 本地证据 + 可选 ES / Prometheus）：过滤、
       去重、关联打分、不可用源状态保留。
 - [x] 单条诊断页故障场景卡片与 Markdown「故障场景」段。
-- [ ] 场景阶段 2：接真实 ES / Prometheus connector source，按场景聚合命中率与 blocked 率。
+- [x] 场景阶段 2：接真实 ES / Prometheus connector source，按场景聚合命中率与 blocked 率。
+- [x] 「故障场景」运营页：场景库、单条试跑、最近 50/100/500 条覆盖评估与阻塞统计。
+- [ ] 把场景覆盖率 / blocked 率接入簇报告与周期报告。
 - [ ] `report_history` / `knowledge` 数据源。
 
 ### Connector 能力完善
-- [ ] 验证真实 Elasticsearch 服务连接。
-- [ ] 完善认证、TLS 和连接配置管理。
+- [x] 验证真实 Elasticsearch 服务连接（本地 Docker ES 9.1.0）。
+- [ ] 完善认证、TLS 和连接配置管理（本地联调已关闭 security）。
 - [ ] 支持企业日志字段映射。
-- [ ] 完善 ES 查询：Trace / Request / Service term 过滤、分页 / `search_after`、
+- [x] 完善 ES 查询：Trace / Request / Service term 过滤、分页 / `search_after`、
       aggregations、保留 `_index` / `_id` / `_score` / highlight。
 - [ ] 增加敏感信息脱敏与访问审计。
+- [x] 验证真实 Prometheus 服务连接（本地 Docker 2.55.1）。
+- [ ] Prometheus 历史窗口查询与长期存储方案。
 
 ### 系统集成模块
 - [ ] 建立 Integration Hub 管理入口。

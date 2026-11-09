@@ -624,7 +624,7 @@ ScenarioRunner
 
 **阶段 1（已完成，2026-11-09）**：
 - `FaultScenarioRegistry` + `validate_scenario()` + `match_scenario()` + `ScenarioRunner`，落在 `services/fault_scenario_service.py`。
-- `feedback` / `evidence` / `manual` 三类本地 source 已接入；`connector` 通过可注入的 `connector_provider` 预留，未接真实 ES / Prometheus。
+- `feedback` / `evidence` / `manual` 三类本地 source 已接入；`connector` 通过可注入的 `connector_provider` 取数。
 - `login.code_delivery`、`payment.result_mismatch`、`generic.triage` 三个场景；单条诊断页增加场景卡片、排查步骤表、缺失源、结论边界；Markdown 报告同步增加「故障场景」段。
 - `DiagnosisService.build()` 支持 `manual_answers`，诊断页用「已有请求级 Trace」勾选项驱动 `trace_lookup`；场景动作会合并进下一步建议。
 - 2026-11-09 追加：直播进入房间失败场景 `live.enter_room_failure`（4 source /
@@ -634,20 +634,26 @@ ScenarioRunner
 - 单测：注册表加载、匹配、`blocked`、`partial`、`verified`、条件树、仓储过滤、
   直播场景嵌套指标取值、跨系统查询与五段排查链路；全量测试 144 passed。
 
-**阶段 1.5（下一轮本地闭环）**：
-- 把 `payment.result_mismatch` 的 E6003 退款咨询拆成独立场景，避免错误码命中跨界。
-- 补 `report_history` / `knowledge` source；报告中心保存场景快照。
-- 在簇报告、周期报告中按场景聚合命中率、blocked 率。
+**阶段 1.5（已完成，2026-11-09）**：
+- 新增 `payment.refund_consultation`（E6003 退款进度咨询），与
+  `payment.result_mismatch` 分开匹配，避免错误码命中跨界。
+- 新增 `ConnectorSourceProvider`：按场景 `connector` source 调真实
+  Elasticsearch / Prometheus，连接失败只降级为缺失源，不补造数据。
+- 新增 `ScenarioOpsService` + 「故障场景」页：场景库、单条试跑、
+  最近 50/100/500 条批量评估、覆盖率 / 已验证 / 部分完成 / 阻塞统计。
+- 本地 Docker ES 9.1.0 / Prometheus 2.55.1 真实联调；NL042 跑出
+  `verified / medium` 与 3 条假设。全量测试 152 passed。
 
-**阶段 2（接外部）**：
-- `connector` source 适配器，复用现有 ES / Prometheus 连接器。
-- 真实实例联调后再打开 `required=true` 的场景。
-- 报告保存场景快照；簇级场景分布。
+**阶段 2（已完成本地，2026-11-09）**：
+- `connector` source 适配器复用现有 ES / Prometheus 连接器；
+  ES 用显式时间窗，Prometheus 默认当前态。
+- 场景页可勾选并填写真实地址，评估 / 试跑都走同一 provider。
+- 仍待生产化：认证、TLS、字段映射、脱敏审计、索引模板。
 
-**阶段 3（运营化）**：
-- 人工确认步骤结果、场景效果统计（命中率/blocked 率/人工采纳率）。
-- 场景版本对比、灰度启用、按 workspace 覆盖。
-- 周期报告按场景聚合，定时任务。
+**阶段 3（运营化，进行中）**：
+- 已做：单条试跑、命中 / 验证 / 阻塞统计、外部连接器场景计数。
+- 待做：把覆盖率 / blocked 率写回簇报告与周期报告；人工确认步骤结果；
+  场景版本对比、灰度启用、按 workspace 覆盖；定时任务。
 
 ## 11. 风险与边界
 

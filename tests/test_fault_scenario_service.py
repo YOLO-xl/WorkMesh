@@ -118,6 +118,7 @@ def test_registry_loads_all_three_scenarios_without_errors():
     assert {item["id"] for item in registry.enabled()} == {
         "login.code_delivery",
         "live.enter_room_failure",
+        "payment.refund_consultation",
         "payment.result_mismatch",
         "generic.triage",
     }
@@ -426,3 +427,71 @@ def test_live_scenario_matches_and_reads_nested_metric_value():
         item["evidence_ids"]
         for item in run["hypotheses"]
     )
+
+
+def _refund_feedback(**overrides):
+    record = {
+        "id": "fb-refund-1",
+        "external_id": "NL042",
+        "uid": "21000294",
+        "feedback_time": "2026-11-06T18:17:54Z",
+        "product": "支付中心",
+        "version": "1.0",
+        "platform": "iOS",
+        "error_code": "E6003",
+        "description": "申请退款三天了，进度一直显示处理中",
+    }
+    record.update(overrides)
+    return record
+
+
+def test_match_refund_consultation_scenario():
+    scenario, score, reasons = match_scenario(
+        _refund_feedback(), FaultScenarioRegistry().enabled()
+    )
+
+    assert scenario["id"] == "payment.refund_consultation"
+    assert score >= 80
+    assert any("错误码命中" in reason for reason in reasons)
+
+
+def test_refund_runner_uses_connector_provider_and_produces_hypotheses():
+    scenario = FaultScenarioRegistry().get("payment.refund_consultation")
+    feedback = _refund_feedback()
+
+    def provider(source, record):
+        if source["id"] == "refund_logs":
+            return [{
+                "record_id": "refund-0001",
+                "uid": "21000294",
+                "trace_id": "trace-refund-0001",
+                "timestamp": "2026-11-06T18:20:00Z",
+                "message": "refund request pending",
+            }]
+        if source["id"] == "refund_metrics":
+            return [{
+                "record_id": "prom:refund",
+                "timestamp": "2026-11-09T12:00:00Z",
+                "attributes": {"metric_value": 12.0},
+            }]
+        return []
+
+    run = ScenarioRunner(
+        feedback_repository=FakeFeedbackRepository([feedback] * 7),
+        evidence_repository=FakeEvidenceRepository(),
+        connector_provider=provider,
+    ).run("workspace", feedback, scenario)
+
+    assert run["status"] == "verified"
+    assert run["signals"]["recent_feedback_count"] == 7
+    assert run["signals"]["same_uid_log_count"] == 1
+    assert run["signals"]["log_trace_count"] == 1
+    assert run["signals"]["refund_pending_total"] == 12.0
+    assert {
+        item["rule_id"] for item in run["hypotheses"]
+    } == {
+        "refund_log_pending",
+        "refund_backlog",
+        "refund_surface_backlog",
+    }
+    assert all(item["evidence_refs"] for item in run["hypotheses"])

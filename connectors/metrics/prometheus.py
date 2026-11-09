@@ -15,7 +15,14 @@ from urllib.request import Request, urlopen
 from connectors.base import BaseConnector
 
 
-SERVICE_LABEL_KEYS = ("service", "job", "app", "component", "product")
+SERVICE_LABEL_KEYS = (
+    "service",
+    "exported_job",
+    "job",
+    "app",
+    "component",
+    "product",
+)
 
 EVIDENCE_LEVEL_BY_METRIC_KIND = {
     "counter": "info",

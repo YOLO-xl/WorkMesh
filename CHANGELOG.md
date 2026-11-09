@@ -3,6 +3,23 @@
 ## [0.7.0-dev] - 2026-11-09
 
 ### Added
+- Elasticsearch 连接器查询能力补齐：term 过滤（uid / error_code / trace_id /
+  request_id / service / level）、显式时间窗、关键词、`filters` 扩展、
+  `search_after` 翻页（自动 `_doc` tiebreaker）、aggregations、highlight、
+  `track_total_hits` 与 `last_total` / `last_aggregations`；标准化保留
+  `_index` / `_id` / `_score` / sort / highlight。
+- Prometheus 连接器按 `exported_job` 优先解析 service；抓取层 `job` 不再覆盖业务服务名。
+- 新增退款进度咨询场景 `payment.refund_consultation`（E6003 / priority 72）：
+  4 个 source / 5 个 signal / 4 个 step / 4 条规则；接入退款日志与退款待处理量指标。
+- 新增 `services/connector_source_provider.py`：把页面配置的 Elasticsearch /
+  Prometheus 注入场景 `connector` source，连接失败降级为可用性提示，不伪造数据。
+- 新增 `services/scenario_ops_service.py` 与第 8 个页面「故障场景」：
+  场景库、配置健康度、单条试跑、最近 50 / 100 / 500 条批量评估、
+  覆盖率 / 已验证 / 部分完成 / 阻塞统计。
+- 场景页支持可选真实连接器：勾选后填写 ES / Prometheus 地址，评估与试跑按场景取数。
+- `tests/test_elasticsearch_connector.py`、`tests/test_prometheus_connector.py`、
+  `tests/test_fault_scenario_service.py`、`tests/test_scenario_ops_service.py`、
+  `tests/test_home_navigation.py` 增补回归；全量 152 passed。
 - 直播进入房间失败场景 `live.enter_room_failure`（priority 75）：4 个 source /
   5 个 signal / 5 个 step / 5 条规则；支持 `attributes.metric_value` 点路径取值，
   指标信号不再恒为 None；规则输出带真实 `evidence_ids`。
@@ -23,11 +40,12 @@
   `services/fault_scenario_service.py`）：JSON 配置 + 声明式规则，
   支持场景注册、校验、匹配、信号计算、步骤判定、规则执行、置信度降级与
   禁用根因词校验；配置目录 `configs/fault_scenarios/`。
-- 四个首批场景：`login.code_delivery`（登录验证码收不到）、
+- 首批五个场景：`login.code_delivery`（登录验证码收不到）、
   `live.enter_room_failure`（直播进入房间失败）、`payment.result_mismatch`
-  （支付结果不一致）、`generic.triage`（通用兜底）。
-- 场景数据源：本地 `feedback` / `evidence` / `manual`；`connector` 通过可注入
-  的 `connector_provider` 预留，真实 ES / Prometheus 仍属阶段 2。
+  （支付结果不一致）、`payment.refund_consultation`（退款进度咨询）、
+  `generic.triage`（通用兜底）。
+- 场景数据源：本地 `feedback` / `evidence` / `manual`，以及通过
+  `connector_provider` 注入的 Elasticsearch / Prometheus。
 - 单条诊断接入场景运行结果：诊断页新增「故障场景」卡片（命中场景、状态、
   置信度、排查步骤表、缺失源、结论边界），Markdown 报告同步新增「故障场景」段；
   场景动作合并进「下一步建议」。
@@ -55,10 +73,12 @@
   `CURRENT_VERSION` 派生，避免每次加迁移都要改测试。
 
 ### Not done
-- 真实 Elasticsearch / Prometheus 实例联调与阈值校准：本机无可用实例，跳过。
 - LLM 多模型对比、提示词评测、限流重试与成本控制：未做。
 - Jaeger / Tempo、OpenSearch / Loki 真实接入：无实例，仅保留后续扩展位。
 - 大文件后台导入与分块解析：未完成，当前仍整文件读入内存。
+- Prometheus 历史时间窗：Prometheus 拒收明显偏历史/未来的显式样本，
+  连接器默认当前态查询；历史窗口需长期存储方案。
+- 跨来源同一条日志归并：`MultiSourceQueryService._dedupe` 暂按来源分别保留。
 
 ## [0.6.0-dev] - 2026-11-09
 

@@ -24,6 +24,7 @@ from ui.evidence_page import render as render_evidence_page
 from ui.cluster_page import render as render_cluster_page
 from ui.diagnosis_page import render as render_diagnosis_page
 from ui.troubleshooting_page import render as render_troubleshooting_page
+from ui.scenario_page import render as render_scenario_page
 from ui.report_page import render as render_report_page
 
 
@@ -82,6 +83,7 @@ PAGES = [
     "反馈分析",
     "单条诊断",
     "故障排查",
+    "故障场景",
     "报告中心",
 ]
 
@@ -505,6 +507,11 @@ elif page == "单条诊断":
 # 故障排查
 elif page == "故障排查":
     render_troubleshooting_page()
+
+
+# 故障场景
+elif page == "故障场景":
+    render_scenario_page()
 
 
 # 报告中心

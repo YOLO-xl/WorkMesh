@@ -77,10 +77,22 @@ v0.7.0-dev
   结论与追溯（`services/troubleshooting_service.py`、`ui/troubleshooting_page.py`）
 - [x] 直播进入房间失败内置样例 F001，端到端 `verified` / `medium`，
   4 条结论证据全部可追溯
-- [x] 自动化测试 144 项
+- [x] 真实 Elasticsearch 9.1.0 / Prometheus 2.55.1 本地 Docker 联调：
+  ES term 过滤 / 时间窗 / 关键词 / `search_after` / aggregations / highlight /
+  元数据保留；Prometheus instant query 与 `exported_job` 标签清洗
+- [x] 故障场景运营化：场景库、启用状态、单条试跑、最近 50/100/500 条覆盖评估、
+  命中 / 已验证 / 部分完成 / 阻塞统计（`services/scenario_ops_service.py`、
+  `ui/scenario_page.py`、第 8 个页面「故障场景」）
+- [x] 退款进度咨询场景 `payment.refund_consultation`（E6003），
+  接入 ES 退款日志与 Prometheus 退款待处理量，NL042 真实联调 `verified` / `medium`
+- [x] `ConnectorSourceProvider`：把页面配置的 ES / Prometheus 注入场景 `connector` source
+- [x] 多源查询按连接器区分时间窗：Prometheus 默认当前态查询，ES 使用显式
+  `start_time/end_time`，避免历史窗口把 Prometheus 查空
+- [x] 自动化测试 152 项
 
 ## 进行中
-- [ ] 真实 Elasticsearch / Prometheus 实例联调（本机暂无可访问环境）
+- [ ] 场景命中率 / blocked 率接入簇报告与周期报告（当前只在「故障场景」页）
+- [ ] 跨来源同一条日志归并（`MultiSourceQueryService._dedupe` 目前按来源分别保留）
 
 ## 待完成
 - [ ] 后台导入任务与分块文件解析（当前整文件读入内存；本轮未做半成品）
@@ -112,19 +124,23 @@ v0.7.0-dev
 
 ## 当前问题
 - 证据关联目前只基于标识与时间，不做语义相似度。
-- Elasticsearch / Prometheus 连接器只用样例与 mock 传输验证，未对真实实例校准。
+- Elasticsearch / Prometheus 已在本地 Docker 实例联调，但生产环境的认证、TLS、
+  字段映射、访问审计与容量验证仍未做。
+- Prometheus 会拒收明显偏历史或偏未来的显式样本；历史窗口查询需要长期存储方案。
+- 场景评估已能统计覆盖与阻塞，但还没有写回簇报告 / 周期报告；跨来源同一条日志暂不归并。
 - 真实 LLM 已用 DeepSeek 单次验证；尚未做多模型对比、提示词评测、限流重试与成本控制。
 - 导入仍是同步整文件读入，没有分块与后台任务，大文件受内存限制。
 - 无错误码聚类有可解释边界：开播端与观看端同现象会分开；建议类文本默认进未归类池。
 - 当前尚无实际性能基准测试数据。
 
 ## 下一步任务
-1. 用真实 Elasticsearch / Prometheus 数据联调连接器，并校准关联阈值与权重。
-2. 接 OpenSearch / Loki / Jaeger / Tempo，补齐 ES 的 Trace / Request / Service
-   term 过滤与分页、aggregations。
-3. 补 LLM 提示词评测、失败重试与成本控制（真实连通已验证）。
-4. 聚类人工校准（合并 / 拆分写回）与产品 + 时间窗分块。
-5. 大文件分块读取与后台导入任务。
+1. 把本地 ES / Prometheus 联调参数化，补认证、TLS、索引模板、脱敏与访问审计，
+   支持接入生产集群。
+2. 接 OpenSearch / Loki / Jaeger / Tempo，并为 Prometheus 历史窗口补长期存储方案。
+3. 把场景覆盖率 / blocked 率接入簇报告与周期报告。
+4. 补 LLM 提示词评测、失败重试与成本控制（真实连通已验证）。
+5. 聚类人工校准（合并 / 拆分写回）与产品 + 时间窗分块。
+6. 大文件分块读取与后台导入任务。
 
 - 2026-11-09：同步 README 与项目状态文档：数据库持久化、导入批次、Prometheus 连接器、规则诊断等已实现项从待办移到已完成，并修正占位页说明。
 - 2026-11-09：无错误码反馈也可聚合：症状词典归约 + 现象/功能加权打分归簇 + 未归类池，反馈分析页新增「反馈全景」现象与功能分布，测试 95 passed。
