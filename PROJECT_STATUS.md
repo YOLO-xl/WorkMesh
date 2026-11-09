@@ -29,7 +29,7 @@ v0.6.0-dev
 - [x] 证据关联引擎（core/correlation.py）
 - [x] 证据表与关联表（Schema v2 Migration）
 - [x] EvidenceRepository 数据访问层
-- [x] 版本化 Migration 框架（v1 → v4 可增量升级）
+- [x] 版本化 Migration 框架（v1 → v5 可增量升级）
 - [x] 证据接入：本地 JSON / JSONL / CSV、Elasticsearch 日志
 - [x] 问题上下文生成：已验证事实 / 待验证假设分离
 - [x] 「证据关联」页面
@@ -37,7 +37,7 @@ v0.6.0-dev
 
 ## 已完成（数据与平台能力）
 - [x] SQLite 连接层（database/connection.py，支持 WORKMESH_DB_PATH 覆盖库路径）
-- [x] 版本化 Migration（v1 → v4）：证据表 / 关联表 / 诊断报告表 / 簇报告表
+- [x] 版本化 Migration（v1 → v5）：证据表 / 关联表 / 诊断报告表 / 簇报告表 / 处理记录表
 - [x] FeedbackRepository / EvidenceRepository 数据访问层
 - [x] 数据持久化与字段标准化
 - [x] 导入批次管理与重复文件检测
@@ -49,11 +49,12 @@ v0.6.0-dev
 - [x] 规则诊断 + 可选 LLM 诊断（引用校验，未配置 LLM 时自动退回规则）
 - [x] 诊断报告中心：归档 / 检索 / 下载 / 删除，内容 hash 去重
 - [x] 问题簇报告：整簇影响面 / 现象分布 / 抽样诊断 / 共性证据，可选 3 / 5 / 8 条抽样
-- [x] 簇报告快照对比：同产品 + 错误码显示较上次的反馈 / 用户 / 证据变化
+- [x] 簇报告快照对比：同产品 + 错误码（无码按标题）显示较上次的反馈 / 用户 / 证据变化
+- [x] 报告处理闭环：诊断报告与簇报告统一状态（待处理 / 已处理 / 已忽略）+ 负责人 + 备注，支持按状态筛选
 - [x] LLM 配置双通道（环境变量优先 / 本机文件兜底）、连接测试与清除
 - [x] 主流服务商预设与模型选择（OpenAI / DeepSeek / 通义 / Kimi / 智谱 / SiliconFlow / Ollama / 自定义）
 - [x] GitHub 仓库公开并持续推送（暂无版本 tag / release）
-- [x] 自动化测试 112 项
+- [x] 自动化测试 119 项
 
 ## 进行中
 - [ ] 真实 Elasticsearch / Prometheus 实例联调（本机暂无可访问环境）

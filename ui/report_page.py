@@ -12,6 +12,7 @@ from database.cluster_report_repository import ClusterReportRepository
 from database.feedback_repository import FeedbackRepository
 from database.migration import initialize_database
 from database.report_repository import ReportRepository
+from database.report_tracking_repository import ReportTrackingRepository
 from services.diagnosis_service import CONFIDENCE_LABELS
 from services.llm_config import (
     CONFIG_PATH,
@@ -27,6 +28,19 @@ from services.llm_config import (
     test_connection,
 )
 from ui.theme import empty_state, hero, section, tag
+
+
+TRACKING_LABELS = {
+    "pending": "待处理",
+    "handled": "已处理",
+    "ignored": "已忽略",
+}
+TRACKING_OPTION_TO_STATUS = {
+    "待处理": "pending",
+    "已处理": "handled",
+    "已忽略": "ignored",
+}
+TRACKING_FILTERS = ["全部状态", "待处理", "已处理", "已忽略"]
 
 
 SEVERITY_LABELS = {"high": "高", "medium": "中", "low": "低"}
@@ -87,18 +101,25 @@ def render(db_path=None) -> None:
     feedback_repository = FeedbackRepository(db_path)
     report_repository = ReportRepository(db_path)
     cluster_report_repository = ClusterReportRepository(db_path)
+    tracking_repository = ReportTrackingRepository(db_path)
     workspace_id = feedback_repository.get_default_workspace()
 
     stats = report_repository.stats(workspace_id)
     cluster_stats = cluster_report_repository.stats(workspace_id)
     total_reports = stats["total"] + cluster_stats["total"]
 
+    tracking_stats = tracking_repository.stats(workspace_id)
+    pending_reports = max(
+        0,
+        total_reports - tracking_stats["handled"] - tracking_stats["ignored"],
+    )
+
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("报告总数", total_reports)
-    c2.metric("近 7 天新增", stats["recent_total"] + cluster_stats["recent_total"])
-    c3.metric("覆盖反馈", stats["covered_feedback"])
-    c4.metric("簇报告", cluster_stats["total"])
-    c5.metric("LLM 生成", stats["llm_total"])
+    c2.metric("待处理", pending_reports)
+    c3.metric("近 7 天新增", stats["recent_total"] + cluster_stats["recent_total"])
+    c4.metric("覆盖反馈", stats["covered_feedback"])
+    c5.metric("簇报告", cluster_stats["total"])
 
     tab_reports, tab_clusters, tab_llm = st.tabs(
         [
@@ -109,19 +130,102 @@ def render(db_path=None) -> None:
     )
 
     with tab_reports:
-        _render_reports(report_repository, workspace_id)
+        _render_reports(report_repository, tracking_repository, workspace_id)
 
     with tab_clusters:
-        _render_cluster_reports(cluster_report_repository, workspace_id)
+        _render_cluster_reports(
+            cluster_report_repository, tracking_repository, workspace_id
+        )
 
     with tab_llm:
         _render_llm_config()
 
 
-def _render_reports(report_repository: ReportRepository, workspace_id: str) -> None:
-    section("报告列表", "按时间倒序；点开即看全文、下载 Markdown 或删除")
+def _show_tracking_flash(key: str) -> None:
+    message = st.session_state.pop(key, None)
+    if message:
+        st.success(message)
 
-    col1, col2 = st.columns([3, 1.2])
+
+def _tracking_line(entry: dict) -> str:
+    label = TRACKING_LABELS.get(entry.get("status"), "待处理")
+    parts = [f"处理：{label}"]
+
+    if entry.get("owner"):
+        parts.append(f"负责人：{entry['owner']}")
+    if entry.get("note"):
+        note = str(entry["note"])
+        parts.append(f"备注：{note[:80]}{'…' if len(note) > 80 else ''}")
+    if entry.get("updated_at"):
+        parts.append(f"更新：{_fmt_time(entry['updated_at'])}")
+
+    return "｜".join(parts)
+
+
+def _render_tracking_form(
+    tracking_repository: ReportTrackingRepository,
+    workspace_id: str,
+    scope: str,
+    report_id: str,
+    entry: dict,
+    flash_key: str,
+) -> None:
+    st.markdown("**处理记录**")
+
+    current_label = TRACKING_LABELS.get(entry.get("status"), "待处理")
+    status_options = [item for item in TRACKING_OPTION_TO_STATUS]
+
+    with st.form(key=f"tracking_form_{scope}_{report_id}"):
+        c1, c2, c3 = st.columns([1.1, 1.2, 2.4])
+
+        with c1:
+            status_label = st.selectbox(
+                "处理状态",
+                status_options,
+                index=status_options.index(current_label),
+                key=f"tracking_status_{scope}_{report_id}",
+            )
+
+        with c2:
+            owner = st.text_input(
+                "负责人",
+                value=entry.get("owner") or "",
+                key=f"tracking_owner_{scope}_{report_id}",
+            )
+
+        with c3:
+            note = st.text_input(
+                "备注",
+                value=entry.get("note") or "",
+                placeholder="例如：已联系研发，等待版本修复",
+                max_chars=500,
+                key=f"tracking_note_{scope}_{report_id}",
+            )
+
+        submitted = st.form_submit_button("保存处理记录")
+
+    if submitted:
+        tracking_repository.upsert(
+            workspace_id,
+            scope,
+            report_id,
+            status=TRACKING_OPTION_TO_STATUS[status_label],
+            owner=owner,
+            note=note,
+        )
+        st.session_state[flash_key] = "处理记录已保存。"
+        st.rerun()
+
+
+def _render_reports(
+    report_repository: ReportRepository,
+    tracking_repository: ReportTrackingRepository,
+    workspace_id: str,
+) -> None:
+    section("报告列表", "按时间倒序；点开即看全文、下载 Markdown 或删除")
+    _show_tracking_flash("tracking_flash_feedback")
+
+    col1, col2, col3 = st.columns([2.6, 1.2, 1.2])
 
     with col1:
         keyword = st.text_input(
@@ -139,18 +243,26 @@ def _render_reports(report_repository: ReportRepository, workspace_id: str) -> N
             label_visibility="collapsed",
         )
 
+    with col3:
+        status_filter = st.selectbox(
+            "处理状态",
+            options=TRACKING_FILTERS,
+            key="report_tracking_filter",
+            label_visibility="collapsed",
+        )
+
     generated_by = {"全部": None, "规则诊断": "rule", "LLM 参与": "llm"}[
         generated_by_label
     ]
 
-    reports = report_repository.list_reports(
+    base_reports = report_repository.list_reports(
         workspace_id,
         keyword=keyword or None,
         generated_by=generated_by,
         limit=100,
     )
 
-    if not reports:
+    if not base_reports:
         empty_state(
             "还没有诊断报告",
             "到「单条诊断」生成一次诊断并保存，报告会出现在这里；"
@@ -158,9 +270,31 @@ def _render_reports(report_repository: ReportRepository, workspace_id: str) -> N
         )
         return
 
-    st.caption(f"共 {len(reports)} 份报告")
+    tracking_entries = tracking_repository.get_many(
+        workspace_id,
+        "feedback",
+        [report["id"] for report in base_reports],
+    )
+
+    selected_status = TRACKING_OPTION_TO_STATUS.get(status_filter)
+    reports = (
+        base_reports
+        if not selected_status
+        else [
+            report
+            for report in base_reports
+            if tracking_entries[report["id"]]["status"] == selected_status
+        ]
+    )
+
+    if not reports:
+        empty_state("没有匹配的报告", "换个生成方式、处理状态或关键词再试。")
+        return
+
+    st.caption(f"共 {len(reports)} / {len(base_reports)} 份报告")
 
     for report in reports:
+        entry = tracking_entries[report["id"]]
         severity = SEVERITY_LABELS.get(report["severity"], report["severity"] or "—")
         confidence = CONFIDENCE_LABELS.get(
             report["confidence"], report["confidence"] or "—"
@@ -184,8 +318,16 @@ def _render_reports(report_repository: ReportRepository, workspace_id: str) -> N
                 f"生成方式：{mode}{model_note}｜窗口 {report['window_minutes']} 分钟"
                 f"｜最低分 {report['min_score']:g}｜反馈：{report['feedback_summary'] or '—'}"
             )
-
+            st.caption(_tracking_line(entry))
             st.markdown(report["markdown"])
+            _render_tracking_form(
+                tracking_repository,
+                workspace_id,
+                "feedback",
+                report["id"],
+                entry,
+                "tracking_flash_feedback",
+            )
 
             download_col, delete_col = st.columns([3, 1])
 
@@ -211,6 +353,9 @@ def _render_reports(report_repository: ReportRepository, workspace_id: str) -> N
                         type="primary",
                     ):
                         report_repository.delete(report["id"])
+                        tracking_repository.delete(
+                            workspace_id, "feedback", report["id"]
+                        )
                         st.session_state.pop(pending_key, None)
                         st.success("报告已删除。")
                         st.rerun()
@@ -257,12 +402,14 @@ def _previous_snapshots(
 
 def _render_cluster_reports(
     report_repository: ClusterReportRepository,
+    tracking_repository: ReportTrackingRepository,
     workspace_id: str,
 ) -> None:
     section(
         "簇报告",
         "从「问题聚类」对某个簇生成；含影响面、现象分布、抽样诊断与共性证据",
     )
+    _show_tracking_flash("tracking_flash_cluster")
 
     all_reports = report_repository.list_reports(workspace_id, limit=200)
 
@@ -292,9 +439,9 @@ def _render_cluster_reports(
     )
     product_options = ["全部产品"] + products
 
-    filter_col, severity_col = st.columns(2)
+    product_col, severity_col, status_col = st.columns([1.4, 1.2, 1.2])
 
-    with filter_col:
+    with product_col:
         product_filter = st.selectbox(
             "按产品筛选",
             product_options,
@@ -310,8 +457,23 @@ def _render_cluster_reports(
             label_visibility="collapsed",
         )
 
+    with status_col:
+        status_filter = st.selectbox(
+            "处理状态",
+            options=TRACKING_FILTERS,
+            key="cluster_report_tracking_filter",
+            label_visibility="collapsed",
+        )
+
     severity_map = {"高": "high", "中": "medium", "低": "low"}
     selected_severity = severity_map.get(severity_filter)
+    selected_status = TRACKING_OPTION_TO_STATUS.get(status_filter)
+
+    tracking_entries = tracking_repository.get_many(
+        workspace_id,
+        "cluster",
+        [report["id"] for report in all_reports],
+    )
 
     reports = []
     keyword_lower = (keyword or "").strip().lower()
@@ -320,6 +482,11 @@ def _render_cluster_reports(
         if product_filter != "全部产品" and report["product"] != product_filter:
             continue
         if selected_severity and report["severity"] != selected_severity:
+            continue
+        if (
+            selected_status
+            and tracking_entries[report["id"]]["status"] != selected_status
+        ):
             continue
         if keyword_lower:
             haystack = " ".join(
@@ -331,7 +498,10 @@ def _render_cluster_reports(
         reports.append(report)
 
     if not reports:
-        empty_state("没有匹配的簇报告", "换个产品、严重程度或关键词再试。")
+        empty_state(
+            "没有匹配的簇报告",
+            "换个产品、严重程度、处理状态或关键词再试。",
+        )
         return
 
     st.caption(f"共 {len(reports)} / {len(all_reports)} 份簇报告")
@@ -340,6 +510,7 @@ def _render_cluster_reports(
     )
 
     for report in reports:
+        entry = tracking_entries[report["id"]]
         severity = SEVERITY_LABELS.get(report["severity"], report["severity"] or "—")
         confidence = CONFIDENCE_LABELS.get(
             report["confidence"], report["confidence"] or "—"
@@ -377,8 +548,16 @@ def _render_cluster_reports(
                 trend = "首次快照"
 
             st.caption(f"严重程度：{severity}｜生成方式：规则汇总｜{trend}")
-
+            st.caption(_tracking_line(entry))
             st.markdown(report["markdown"])
+            _render_tracking_form(
+                tracking_repository,
+                workspace_id,
+                "cluster",
+                report["id"],
+                entry,
+                "tracking_flash_cluster",
+            )
 
             download_col, delete_col = st.columns([3, 1])
 
@@ -404,6 +583,9 @@ def _render_cluster_reports(
                         type="primary",
                     ):
                         report_repository.delete(report["id"])
+                        tracking_repository.delete(
+                            workspace_id, "cluster", report["id"]
+                        )
                         st.session_state.pop(pending_key, None)
                         st.success("簇报告已删除。")
                         st.rerun()
