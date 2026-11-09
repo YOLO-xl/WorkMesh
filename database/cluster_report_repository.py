@@ -164,6 +164,42 @@ class ClusterReportRepository:
 
         return [_row_to_report(row) for row in rows]
 
+    def issue_history(
+        self,
+        workspace_id: str,
+        product: Optional[str],
+        error_code: Optional[str],
+        title: Optional[str] = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        """同一问题的历史快照，按时间升序。
+
+        有错误码时按产品 + 错误码归并；无错误码时用报告标题兜底，
+        避免把同一产品下现象不同的簇当成同一个问题。
+        """
+
+        if error_code:
+            conditions = "product IS ? AND error_code IS ?"
+            params: list[Any] = [workspace_id, product, error_code]
+        else:
+            conditions = "product IS ? AND title = ?"
+            params = [workspace_id, product, title or ""]
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT *
+                FROM cluster_reports
+                WHERE workspace_id = ?
+                  AND {conditions}
+                ORDER BY created_at ASC, rowid ASC
+                LIMIT ?
+                """,
+                (*params, int(limit)),
+            ).fetchall()
+
+        return [_row_to_report(row) for row in rows]
+
     def get(self, report_id: str) -> Optional[dict]:
         with self._connect() as conn:
             row = conn.execute(

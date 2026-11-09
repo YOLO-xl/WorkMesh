@@ -220,6 +220,37 @@ def _render_reports(report_repository: ReportRepository, workspace_id: str) -> N
                         st.rerun()
 
 
+def _previous_snapshots(
+    report_repository: ClusterReportRepository,
+    workspace_id: str,
+    reports: list[dict],
+) -> dict[str, dict]:
+    """同一产品 + 错误码的上一份快照，用于展示变化。"""
+
+    keys = {
+        (
+            report["product"],
+            report["error_code"],
+            None if report["error_code"] else report["title"],
+        )
+        for report in reports
+    }
+    previous: dict[str, dict] = {}
+
+    for product, error_code, title in keys:
+        history = report_repository.issue_history(
+            workspace_id,
+            product,
+            error_code,
+            title=title,
+            limit=100,
+        )
+        for index in range(1, len(history)):
+            previous[history[index]["id"]] = history[index - 1]
+
+    return previous
+
+
 def _render_cluster_reports(
     report_repository: ClusterReportRepository,
     workspace_id: str,
@@ -229,20 +260,9 @@ def _render_cluster_reports(
         "从「问题聚类」对某个簇生成；含影响面、现象分布、抽样诊断与共性证据",
     )
 
-    keyword = st.text_input(
-        "搜索簇报告",
-        placeholder="标题、产品、错误码或正文关键词",
-        key="cluster_report_keyword",
-        label_visibility="collapsed",
-    )
+    all_reports = report_repository.list_reports(workspace_id, limit=200)
 
-    reports = report_repository.list_reports(
-        workspace_id,
-        keyword=keyword or None,
-        limit=100,
-    )
-
-    if not reports:
+    if not all_reports:
         empty_state(
             "还没有簇报告",
             "到「问题聚类」展开一个簇，点「生成簇报告」；"
@@ -250,7 +270,64 @@ def _render_cluster_reports(
         )
         return
 
-    st.caption(f"共 {len(reports)} 份簇报告")
+    keyword = st.text_input(
+        "搜索簇报告",
+        placeholder="标题、产品、错误码或正文关键词",
+        key="cluster_report_keyword",
+        label_visibility="collapsed",
+    )
+
+    products = sorted(
+        {report["product"] for report in all_reports if report["product"]}
+    )
+    product_options = ["全部产品"] + products
+
+    filter_col, severity_col = st.columns(2)
+
+    with filter_col:
+        product_filter = st.selectbox(
+            "按产品筛选",
+            product_options,
+            key="cluster_report_product",
+            label_visibility="collapsed",
+        )
+
+    with severity_col:
+        severity_filter = st.selectbox(
+            "按严重程度筛选",
+            ["全部严重度", "高", "中", "低"],
+            key="cluster_report_severity",
+            label_visibility="collapsed",
+        )
+
+    severity_map = {"高": "high", "中": "medium", "低": "low"}
+    selected_severity = severity_map.get(severity_filter)
+
+    reports = []
+    keyword_lower = (keyword or "").strip().lower()
+
+    for report in all_reports:
+        if product_filter != "全部产品" and report["product"] != product_filter:
+            continue
+        if selected_severity and report["severity"] != selected_severity:
+            continue
+        if keyword_lower:
+            haystack = " ".join(
+                str(report.get(key) or "")
+                for key in ("title", "product", "error_code", "markdown")
+            ).lower()
+            if keyword_lower not in haystack:
+                continue
+        reports.append(report)
+
+    if not reports:
+        empty_state("没有匹配的簇报告", "换个产品、严重程度或关键词再试。")
+        return
+
+    st.caption(f"共 {len(reports)} / {len(all_reports)} 份簇报告")
+    previous_snapshots = _previous_snapshots(
+        report_repository, workspace_id, reports
+    )
 
     for report in reports:
         severity = SEVERITY_LABELS.get(report["severity"], report["severity"] or "—")
@@ -270,7 +347,26 @@ def _render_cluster_reports(
             c3.metric("关联证据", report["evidence_total"])
             c4.metric("证据充分度", confidence)
 
-            st.caption(f"严重程度：{severity}｜生成方式：规则汇总")
+            previous = previous_snapshots.get(report["id"])
+            if previous:
+                size_delta = report["size"] - previous["size"]
+                user_delta = report["unique_users"] - previous["unique_users"]
+                evidence_delta = report["evidence_total"] - previous["evidence_total"]
+                if size_delta == user_delta == evidence_delta == 0:
+                    trend = (
+                        f"较上次（{_fmt_time(previous['created_at'])}）："
+                        "成员与证据无变化"
+                    )
+                else:
+                    trend = (
+                        f"较上次（{_fmt_time(previous['created_at'])}）："
+                        f"反馈 {size_delta:+d} / 用户 {user_delta:+d} / "
+                        f"证据 {evidence_delta:+d}"
+                    )
+            else:
+                trend = "首次快照"
+
+            st.caption(f"严重程度：{severity}｜生成方式：规则汇总｜{trend}")
 
             st.markdown(report["markdown"])
 

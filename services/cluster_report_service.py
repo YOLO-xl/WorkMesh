@@ -67,6 +67,8 @@ def _pick_samples(cluster: dict, sample_size: int) -> list[dict]:
         ordered[-1] if ordered else {},
         max(members, key=lambda item: len(str(item.get("description") or ""))),
     ]
+    # 抽样条数大于 3 时继续按时间倒序补齐，保证可选 5 / 8 条。
+    candidates.extend(ordered)
 
     picked: list[dict] = []
     seen: set[str] = set()

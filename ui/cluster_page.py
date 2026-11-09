@@ -223,21 +223,30 @@ def _render_detail(cluster: dict, workspace_id: str, db_path) -> None:
         )
 
     with report_col:
+        sample_size = st.selectbox(
+            "簇报告抽样条数",
+            options=(3, 5, 8),
+            index=0,
+            format_func=lambda value: f"抽样 {value} 条",
+            key=f"cluster_report_sample_{cluster['cluster_id']}",
+            label_visibility="collapsed",
+        )
+
         if st.button(
             "生成簇报告",
             key=f"cluster_report_{cluster['cluster_id']}",
             type="primary",
             use_container_width=True,
         ):
-            with st.spinner("汇总簇内反馈，并抽样成员做诊断…"):
+            with st.spinner(f"汇总簇内反馈，并抽样 {sample_size} 条做诊断…"):
                 report_result = ClusterReportService(db_path=db_path).build(
-                    workspace_id, cluster
+                    workspace_id, cluster, sample_size=sample_size
                 )
                 _, created = ClusterReportRepository(db_path).save(
                     workspace_id, cluster, report_result
                 )
             st.success(
-                "簇报告已归档到报告中心 →「簇报告」。"
+                f"簇报告已归档到报告中心 →「簇报告」（抽样 {sample_size} 条）。"
                 if created
                 else "这个簇已经生成过相同内容的报告，未重复归档。"
             )
@@ -268,7 +277,7 @@ def _render_detail(cluster: dict, workspace_id: str, db_path) -> None:
     with note_col:
         st.caption(
             "簇是「看起来同一批问题」，不是故障结论；"
-            "簇报告会抽样 3 条成员做单条诊断，再汇总影响面与共性证据；"
+            "簇报告按所选条数抽样成员做单条诊断，再汇总影响面与共性证据；"
             "点代表反馈进入单条诊断可查看完整证据引用。"
         )
 
