@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from services import llm_config
 from services.diagnosis_service import DiagnosisService
 from services.evidence_service import EvidenceService
 
@@ -102,9 +103,10 @@ def test_rule_diagnosis_cites_existing_evidence(prepared, db_path):
 
 
 def test_llm_without_config_reports_error(
-    prepared, db_path, monkeypatch
+    prepared, db_path, monkeypatch, tmp_path
 ):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(llm_config, "CONFIG_PATH", tmp_path / "llm.local.json")
     workspace_id, feedback_id, evidence_service = prepared
     service = DiagnosisService(evidence_service=evidence_service)
 

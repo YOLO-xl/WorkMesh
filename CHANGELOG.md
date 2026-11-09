@@ -17,6 +17,8 @@
 - `DiagnosisService.build()` 返回完整 `context`，排查服务可直接复用关联结果。
 - `tests/test_multi_source_query_service.py` 4 项、`tests/test_troubleshooting_service.py`
   2 项；测试总数 137 → 144。
+- 真实 LLM 线上联调：DeepSeek `deepseek-chat` 连接成功；F001 生成 `规则 + LLM`
+  报告，`generated_by=llm`、引用校验通过，并归档到报告中心。
 - 故障场景模型第一阶段（`docs/FAULT_SCENARIO_MODEL.md` +
   `services/fault_scenario_service.py`）：JSON 配置 + 声明式规则，
   支持场景注册、校验、匹配、信号计算、步骤判定、规则执行、置信度降级与
@@ -54,7 +56,7 @@
 
 ### Not done
 - 真实 Elasticsearch / Prometheus 实例联调与阈值校准：本机无可用实例，跳过。
-- 真实 LLM 凭据线上诊断：未提供 Key，跳过。
+- LLM 多模型对比、提示词评测、限流重试与成本控制：未做。
 - Jaeger / Tempo、OpenSearch / Loki 真实接入：无实例，仅保留后续扩展位。
 - 大文件后台导入与分块解析：未完成，当前仍整文件读入内存。
 

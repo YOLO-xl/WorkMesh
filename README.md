@@ -64,6 +64,8 @@ WorkMesh 是一个面向企业技术支持与生产问题排查场景的 AI 工�
   文件以 0600 权限存放，诊断服务即时读取。
 - LLM 服务商预设：OpenAI、DeepSeek、通义千问、Kimi、智谱 GLM、SiliconFlow、
   本地 Ollama、自定义网关；切换后自动填入兼容地址与常用模型。
+- 真实 LLM 线上诊断已验证：DeepSeek `deepseek-chat` 连接成功，F001 生成
+  `规则 + LLM` 报告，证据引用校验通过并归档。
 - 统一 Evidence 证据模型：日志、反馈等接入后转换为同一结构并持久化。
 - 证据关联分析：按 Trace ID / Request ID / UID / 错误码 / 服务与时间窗口计算关联分数。
 - 「证据关联」页面：证据接入、生成问题上下文、回看已保存关联。
@@ -78,7 +80,7 @@ WorkMesh 是一个面向企业技术支持与生产问题排查场景的 AI 工�
 - 完善 Elasticsearch 查询能力（Trace / Request / Service term 过滤、分页、
   aggregations、`_index` / `_id` / `_score` / highlight 保留），接入 OpenSearch、Loki。
 - 接入 Jaeger / Tempo 链路追踪。
-- 接入真实 LLM 凭据做线上诊断（配置通道已就绪，当前未填真实 Key）。
+- LLM 提示词评测、多模型对比与失败重试。
 - 大文件分块读取与后台导入任务。
 
 ## 技术栈
