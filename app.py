@@ -12,6 +12,7 @@ from services.data_import_service import (
 
 from database.migration import initialize_database
 from database.feedback_repository import FeedbackRepository
+from ui.evidence_page import render as render_evidence_page
 
 
 # 初始化数据库并创建 Repository
@@ -71,7 +72,7 @@ st.sidebar.divider()
 
 page = st.sidebar.radio(
     "工作空间",
-    ["工作台首页", "数据接入", "反馈分析", "AI 分析", "报告中心"],
+    ["工作台首页", "数据接入", "证据关联", "反馈分析", "AI 分析", "报告中心"],
     key="page_navigation",
 )
 
@@ -419,6 +420,11 @@ elif page == "数据接入":
 
         except Exception as exc:
             st.error(f"文件处理失败：{exc}")
+
+
+# 证据关联
+elif page == "证据关联":
+    render_evidence_page()
 
 
 # 其他模块

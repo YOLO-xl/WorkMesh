@@ -429,218 +429,117 @@ PRAGMA foreign_keys = ON;
 
 设置合理的 busy_timeout，降低并发读写冲突。
 
-## 12. 数据库实现约束补充
 
-### 12.1 工作空间隔离
+## 13. 统一证据模型（Schema v2）
+
+### 13.1 背景
+
+反馈、日志、指标和链路追踪来自不同系统，字段、时间精度和标识能力都不一致。
+如果每条分析链路各自处理原始数据，跨源关联无法复用，结论也难以回溯。
+
+v2 引入统一证据模型：
+
+- 所有外部记录转换为 `Evidence` 结构（core/evidence.py）。
+- 外部证据持久化到 `evidence_records`。
+- 反馈记录仍保存在 `feedback_records`，分析时转换为 Evidence 锚点，避免重复存储。
+- 证据之间的关系持久化到 `evidence_links`。
+
+### 13.2 evidence_records
+
+| 字段 | 说明 |
+| --- | --- |
+| id | UUID 主键 |
+| workspace_id | 所属工作空间 |
+| source_id | 数据源 ID（复合外键，必须同属一个工作空间） |
+| evidence_type | feedback / log / metric / trace / change / note |
+| connector_type | 接入连接器类型，如 elasticsearch、file、prometheus |
+| record_id | 外部系统记录 ID，用于重复接入去重 |
+| timestamp | 证据时间，UTC ISO 8601 |
+| uid | 用户标识 |
+| request_id | 请求标识 |
+| trace_id | 链路标识 |
+| service | 服务或产品名称 |
+| level | 日志级别等严重程度 |
+| error_code | 错误码 |
+| title / message | 摘要与正文 |
+| attributes_json | 未进入统一字段的其他结构化属性 |
+| raw_data | 原始记录，完整保留 |
+| content_hash | 内容指纹，缺少外部 ID 时用于去重 |
+
+约束：
+
+- `UNIQUE(source_id, record_id) WHERE record_id IS NOT NULL`，同一数据源内外部记录不重复。
+- `UNIQUE(id, workspace_id)` 与复合外键，保证证据不跨工作空间串数据。
+
+### 13.3 evidence_links
+
+| 字段 | 说明 |
+| --- | --- |
+| id | UUID 主键 |
+| workspace_id | 所属工作空间 |
+| anchor_type | feedback / evidence / analysis |
+| anchor_id | 锚点记录 ID（反馈 ID 或证据 ID） |
+| evidence_id | 关联证据 ID（复合外键，ON DELETE CASCADE） |
+| relation | correlates / supports / contradicts / context |
+| score | 0-100 关联分数 |
+| strength | strong / medium / weak |
+| matched_keys_json | 命中的关联键列表 |
+| reasons_json | 中文关联理由 |
+
+设计说明：
+
+- 关联是「可解释的加法打分」，不是黑盒相似度；理由随分数一起落库。
+- 重新生成上下文时按锚点整体重建（先删后写），避免重复关联。
+- 其他反馈记录不写入 evidence_records，因此它们参与上下文计算但不落关联表（`persisted=false`）。
+
+### 13.4 关联规则
+
+| 条件 | 权重 | 是否受时间窗口约束 |
+| --- | --- | --- |
+| trace_id 一致 | 45 | 否（超窗口仍关联，理由中标注） |
+| request_id 一致 | 40 | 否（同上） |
+| uid 一致 | 25 | 是 |
+| error_code 一致 | 20 | 是 |
+| service 一致 | 10 | 是 |
+| 时间相差 <= 5 分钟 | 10 | — |
+
+必须在 trace_id / request_id / uid 中至少命中一个，才允许产生关联；
+「服务名一致 + 时间接近」单独不构成证据。
+
+强度判定基于命中键而不是分数阈值：
+
+- 命中 trace_id 或 request_id → strong。
+- 命中 uid 且命中 error_code → strong。
+- 仅命中 uid 或仅命中 error_code → medium。
+
+原因：反馈锚点通常没有 Trace ID，如果只按分数划线，「强关联」会永远不可达。
+
+### 13.5 相关实现
+
+| 职责 | 位置 |
+| --- | --- |
+| 证据结构与字段解析 | core/evidence.py |
+| 关联规则与候选粗筛条件 | core/correlation.py |
+| 证据与关联落库 | database/evidence_repository.py |
+| 取证编排、事实与假设生成 | services/evidence_service.py |
+| 页面 | ui/evidence_page.py（侧边栏「证据关联」） |
+| 结构迁移 | database/migrations/002_evidence_model.sql |
+
+### 13.6 扩展方式
+
+新增数据源（Prometheus、Loki、Jaeger）时：
+
+1. 实现 `BaseConnector`，在 `normalize()` 中输出统一 Evidence 字段。
+2. 在 `connectors/__init__.py` 注册连接器。
+3. 通过 `EvidenceService.ingest_connector_records()` 写入，无需改动关联逻辑。
 
-data_sources 和 import_batches 均应建立：
+新增证据类型时，需要同步修改：
 
-UNIQUE(id, workspace_id)
+- `core/evidence.py` 的 `EVIDENCE_TYPES`
+- `database/migrations/` 中新的 CHECK 约束迁移
 
-feedback_records 使用复合外键：
+### 13.7 已知限制
 
-(source_id, workspace_id)
-引用 data_sources(id, workspace_id)。
-
-(batch_id, workspace_id)
-引用 import_batches(id, workspace_id)。
-
-确保反馈记录、数据源、导入批次属于同一工作空间。
-
-SQLite 外键必须在每个数据库连接中显式启用。
-
-### 12.2 外部记录唯一性
-
-外部记录 ID 采用数据源范围内的唯一约束。
-
-同一数据源中，未软删除的 external_id 不允许重复。
-
-不同数据源允许出现相同 external_id。
-
-external_id 为空时不参与唯一性约束。
-
-### 12.3 文件重复导入
-
-file_hash 用于识别相同文件。
-
-相同文件再次导入时，系统应提示历史导入记录，并允许用户确认重新导入。
-
-不对 file_hash 建立全局唯一约束。
-
-### 12.4 时间规范
-
-数据库统一保存 UTC ISO 8601 时间字符串。
-
-例如：
-
-2026-11-03T08:30:00Z
-
-原始时间值保留在 raw_payload 中。
-
-### 12.5 JSON 字段规范
-
-raw_payload、extra_data、config_json、details_json 等字段采用 JSON 字符串存储。
-
-写入前由应用层验证 JSON 格式。
-
-### 12.6 数据库迁移
-
-使用 schema_migrations 表记录已执行的迁移版本。
-
-迁移必须按版本顺序执行。
-
-每次迁移应支持事务；对于 SQLite 不支持事务的 DDL 操作，应单独设计迁移策略。
-
-### 12.7 SQLite 连接配置
-
-每个连接必须启用：
-
-PRAGMA foreign_keys = ON;
-
-数据库启用 WAL 模式。
-
-设置合理的 busy_timeout，降低并发读写冲突。
-
-## 12. 数据库实现约束补充
-
-### 12.1 工作空间隔离
-
-data_sources 和 import_batches 均应建立：
-
-UNIQUE(id, workspace_id)
-
-feedback_records 使用复合外键：
-
-(source_id, workspace_id)
-引用 data_sources(id, workspace_id)。
-
-(batch_id, workspace_id)
-引用 import_batches(id, workspace_id)。
-
-确保反馈记录、数据源、导入批次属于同一工作空间。
-
-SQLite 外键必须在每个数据库连接中显式启用。
-
-### 12.2 外部记录唯一性
-
-外部记录 ID 采用数据源范围内的唯一约束。
-
-同一数据源中，未软删除的 external_id 不允许重复。
-
-不同数据源允许出现相同 external_id。
-
-external_id 为空时不参与唯一性约束。
-
-### 12.3 文件重复导入
-
-file_hash 用于识别相同文件。
-
-相同文件再次导入时，系统应提示历史导入记录，并允许用户确认重新导入。
-
-不对 file_hash 建立全局唯一约束。
-
-### 12.4 时间规范
-
-数据库统一保存 UTC ISO 8601 时间字符串。
-
-例如：
-
-2026-11-03T08:30:00Z
-
-原始时间值保留在 raw_payload 中。
-
-### 12.5 JSON 字段规范
-
-raw_payload、extra_data、config_json、details_json 等字段采用 JSON 字符串存储。
-
-写入前由应用层验证 JSON 格式。
-
-### 12.6 数据库迁移
-
-使用 schema_migrations 表记录已执行的迁移版本。
-
-迁移必须按版本顺序执行。
-
-每次迁移应支持事务；对于 SQLite 不支持事务的 DDL 操作，应单独设计迁移策略。
-
-### 12.7 SQLite 连接配置
-
-每个连接必须启用：
-
-PRAGMA foreign_keys = ON;
-
-数据库启用 WAL 模式。
-
-设置合理的 busy_timeout，降低并发读写冲突。
-
-## 12. 数据库实现约束补充
-
-### 12.1 工作空间隔离
-
-data_sources 和 import_batches 均应建立：
-
-UNIQUE(id, workspace_id)
-
-feedback_records 使用复合外键：
-
-(source_id, workspace_id)
-引用 data_sources(id, workspace_id)。
-
-(batch_id, workspace_id)
-引用 import_batches(id, workspace_id)。
-
-确保反馈记录、数据源、导入批次属于同一工作空间。
-
-SQLite 外键必须在每个数据库连接中显式启用。
-
-### 12.2 外部记录唯一性
-
-外部记录 ID 采用数据源范围内的唯一约束。
-
-同一数据源中，未软删除的 external_id 不允许重复。
-
-不同数据源允许出现相同 external_id。
-
-external_id 为空时不参与唯一性约束。
-
-### 12.3 文件重复导入
-
-file_hash 用于识别相同文件。
-
-相同文件再次导入时，系统应提示历史导入记录，并允许用户确认重新导入。
-
-不对 file_hash 建立全局唯一约束。
-
-### 12.4 时间规范
-
-数据库统一保存 UTC ISO 8601 时间字符串。
-
-例如：
-
-2026-11-03T08:30:00Z
-
-原始时间值保留在 raw_payload 中。
-
-### 12.5 JSON 字段规范
-
-raw_payload、extra_data、config_json、details_json 等字段采用 JSON 字符串存储。
-
-写入前由应用层验证 JSON 格式。
-
-### 12.6 数据库迁移
-
-使用 schema_migrations 表记录已执行的迁移版本。
-
-迁移必须按版本顺序执行。
-
-每次迁移应支持事务；对于 SQLite 不支持事务的 DDL 操作，应单独设计迁移策略。
-
-### 12.7 SQLite 连接配置
-
-每个连接必须启用：
-
-PRAGMA foreign_keys = ON;
-
-数据库启用 WAL 模式。
-
-设置合理的 busy_timeout，降低并发读写冲突。
+- 关联基于标识与时间，不做语义相似度，无法识别「描述不同但同一根因」的问题。
+- 指标与链路追踪连接器尚未接入，当前证据以日志和反馈为主。
+- 关联结果不自动下结论，事实与假设分开标注，根因仍需人工确认。

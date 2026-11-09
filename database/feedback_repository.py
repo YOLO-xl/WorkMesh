@@ -1,70 +1,16 @@
 import json
-import math
 import sqlite3
-import uuid
 
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
 from database.connection import get_connection
-
-
-def generate_id() -> str:
-    return str(uuid.uuid4())
-
-
-def utc_now() -> str:
-    return (
-        datetime.now(timezone.utc)
-        .isoformat(timespec="seconds")
-        .replace("+00:00", "Z")
-    )
-
-
-def normalize_value(value: Any) -> Any:
-    """将 Pandas/Numpy 等类型转换为可存储的 Python 基础类型。"""
-
-    if value is None:
-        return None
-
-    if hasattr(value, "to_pydatetime"):
-        value = value.to_pydatetime()
-
-    if hasattr(value, "item") and callable(value.item):
-        try:
-            value = value.item()
-        except (ValueError, TypeError):
-            pass
-
-    if isinstance(value, float) and math.isnan(value):
-        return None
-
-    if isinstance(value, datetime):
-        if value.tzinfo is None:
-            value = value.replace(tzinfo=timezone.utc)
-
-        return (
-            value.astimezone(timezone.utc)
-            .isoformat(timespec="seconds")
-            .replace("+00:00", "Z")
-        )
-
-    if isinstance(value, Path):
-        return str(value)
-
-    return value
-
-
-def json_dumps(data: Any) -> str:
-    """生成兼容 SQLite TEXT 字段的 JSON 字符串。"""
-
-    return json.dumps(
-        data,
-        ensure_ascii=False,
-        default=str,
-        allow_nan=False,
-    )
+from database.utils import (
+    generate_id,
+    json_dumps,
+    normalize_value,
+    utc_now,
+)
 
 
 class FeedbackRepository:
@@ -623,3 +569,80 @@ class FeedbackRepository:
                 ],
                 **distributions,
             }
+
+    def get_feedback_record(
+        self,
+        workspace_id: str,
+        feedback_id: str,
+    ) -> Optional[dict]:
+        """按 ID 查询单条反馈记录（用于证据关联的锚点）。"""
+
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT *
+                FROM feedback_records
+                WHERE workspace_id = ?
+                  AND id = ?
+                  AND deleted_at IS NULL
+                """,
+                (workspace_id, feedback_id),
+            ).fetchone()
+
+        return dict(row) if row else None
+
+    def find_related_feedback(
+        self,
+        workspace_id: str,
+        anchor_id: str,
+        uid: Optional[str] = None,
+        error_code: Optional[str] = None,
+        start_time: Optional[str] = None,
+        end_time: Optional[str] = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        """查找其他可能相关的反馈记录。
+
+        关联条件：相同 UID 或相同错误码，且落在同一时间窗口内。
+        该查询用于「同类问题是否集中爆发」的判断，不涉及语义相似度。
+        """
+
+        conditions = ["workspace_id = ?", "deleted_at IS NULL", "id != ?"]
+        parameters: list[Any] = [workspace_id, anchor_id]
+
+        key_conditions = []
+        if uid:
+            key_conditions.append("uid = ?")
+            parameters.append(uid)
+        if error_code:
+            key_conditions.append("error_code = ?")
+            parameters.append(error_code)
+
+        if not key_conditions:
+            return []
+
+        conditions.append("(" + " OR ".join(key_conditions) + ")")
+
+        if start_time:
+            conditions.append("feedback_time >= ?")
+            parameters.append(start_time)
+        if end_time:
+            conditions.append("feedback_time <= ?")
+            parameters.append(end_time)
+
+        limit = min(max(int(limit), 1), 200)
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT *
+                FROM feedback_records
+                WHERE {' AND '.join(conditions)}
+                ORDER BY feedback_time DESC
+                LIMIT ?
+                """,
+                (*parameters, limit),
+            ).fetchall()
+
+        return [dict(row) for row in rows]
+

@@ -1,7 +1,7 @@
 import sqlite3
 from pathlib import Path
 
-from database.migration import initialize_database
+from database.migration import CURRENT_VERSION, initialize_database
 from database.feedback_repository import FeedbackRepository
 
 
@@ -9,7 +9,7 @@ def test_bulk_insert_handles_duplicate_feedback_id(tmp_path):
     db_path = Path(tmp_path) / "test_workmesh.db"
 
     # 初始化数据库
-    assert initialize_database(db_path) == 1
+    assert initialize_database(db_path) == CURRENT_VERSION
 
     repo = FeedbackRepository(db_path)
 

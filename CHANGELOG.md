@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.2.0-dev] - 2026-11-09
+
+### Added
+- 统一 Evidence 证据模型（`core/evidence.py`）：反馈、日志等转换为同一结构，
+  保留 `attributes` 与原始 `raw_data`。
+- 证据关联引擎（`core/correlation.py`）：Trace ID / Request ID / UID /
+  错误码 / 服务 + 时间窗口的加法打分，输出命中键与中文理由。
+- Schema v2：`evidence_records`、`evidence_links` 两张表及索引。
+- 版本化 Migration 框架，支持已有 v1 库增量升级到 v2。
+- `EvidenceRepository`：证据幂等写入（外部 ID / 内容指纹去重）、候选粗筛、
+  关联重建与关联明细查询。
+- `FeedbackRepository`：单条反馈查询、同 UID / 同错误码的相关反馈查询。
+- `EvidenceService`：证据接入、问题上下文生成、事实与假设分离。
+- 「证据关联」页面（`ui/evidence_page.py`）：证据接入、生成上下文、回看关联。
+- 样例日志 `data/sample/log_sample.jsonl`，支持离线体验关联能力。
+- 文档：`docs/EVIDENCE_MODEL.md`；`docs/DATA_MODEL.md` 新增第 13 节并清理重复章节。
+
+### Changed
+- `database/migration.py` 改为按版本执行的迁移框架，返回最终版本号。
+- 公共数据层工具（ID、时间、JSON 归一）抽取到 `database/utils.py`。
+- 强度判定由分数阈值改为命中键判定，避免反馈锚点永远无法达到「强关联」。
+
+### Testing
+- 新增证据模型、关联规则、Repository、Migration 升级、Service 编排测试。
+- 全项目测试：57 passed。
+
 ## [0.1.0-dev] - 2026-11-03
 
 ### Added
