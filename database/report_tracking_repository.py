@@ -149,6 +149,67 @@ class ReportTrackingRepository:
 
         return self.get(workspace_id, scope, report_id)
 
+    def bulk_update(
+        self,
+        workspace_id: str,
+        scope: str,
+        report_ids: list[str],
+        status: str = DEFAULT_STATUS,
+        owner: Optional[str] = None,
+        note: Optional[str] = None,
+    ) -> int:
+        """批量更新处理状态。
+
+        负责人 / 备注留空时保留各报告原值，避免一次批量操作清空已有备注。
+        """
+
+        self._validate_scope(scope)
+        self._validate_status(status)
+
+        if not report_ids:
+            return 0
+
+        entries = self.get_many(workspace_id, scope, report_ids)
+        cleaned_owner = " ".join(str(owner or "").split())[:80] or None
+        cleaned_note = " ".join(str(note or "").split())[:NOTE_LIMIT] or None
+        updated_at = utc_now()
+
+        rows = [
+            (
+                workspace_id,
+                scope,
+                report_id,
+                status,
+                cleaned_owner
+                if cleaned_owner
+                else entries[report_id].get("owner"),
+                cleaned_note if cleaned_note else entries[report_id].get("note"),
+                updated_at,
+            )
+            for report_id in report_ids
+        ]
+
+        with self._connect() as conn:
+            conn.executemany(
+                """
+                INSERT INTO report_tracking
+                (
+                    workspace_id, report_scope, report_id,
+                    status, owner, note, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (workspace_id, report_scope, report_id)
+                DO UPDATE SET
+                    status = excluded.status,
+                    owner = excluded.owner,
+                    note = excluded.note,
+                    updated_at = excluded.updated_at
+                """,
+                rows,
+            )
+
+        return len(rows)
+
     def delete(self, workspace_id: str, scope: str, report_id: str) -> bool:
         self._validate_scope(scope)
 

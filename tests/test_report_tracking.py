@@ -109,3 +109,70 @@ def test_rejects_unknown_scope_and_status(tracking_repository, workspace_id):
         tracking_repository.upsert(
             workspace_id, "feedback", "report-1", status="done"
         )
+
+
+def test_bulk_update_preserves_blank_owner_and_note(
+    tracking_repository, workspace_id
+):
+    tracking_repository.upsert(
+        workspace_id,
+        "cluster",
+        "report-1",
+        status="pending",
+        owner="张三",
+        note="等待研发",
+    )
+    tracking_repository.upsert(
+        workspace_id,
+        "cluster",
+        "report-2",
+        status="pending",
+        owner="李四",
+        note="等待版本",
+    )
+
+    changed = tracking_repository.bulk_update(
+        workspace_id,
+        "cluster",
+        ["report-1", "report-2"],
+        status="handled",
+    )
+
+    assert changed == 2
+    first = tracking_repository.get(workspace_id, "cluster", "report-1")
+    second = tracking_repository.get(workspace_id, "cluster", "report-2")
+
+    assert first["status"] == "handled"
+    assert first["owner"] == "张三"
+    assert first["note"] == "等待研发"
+    assert second["status"] == "handled"
+    assert second["owner"] == "李四"
+    assert second["note"] == "等待版本"
+
+
+def test_bulk_update_sets_owner_and_note_for_all(
+    tracking_repository, workspace_id
+):
+    changed = tracking_repository.bulk_update(
+        workspace_id,
+        "feedback",
+        ["report-1", "report-2"],
+        status="ignored",
+        owner="王五",
+        note="按产品统一忽略",
+    )
+
+    assert changed == 2
+    for report_id in ("report-1", "report-2"):
+        entry = tracking_repository.get(workspace_id, "feedback", report_id)
+        assert entry["status"] == "ignored"
+        assert entry["owner"] == "王五"
+        assert entry["note"] == "按产品统一忽略"
+
+
+def test_bulk_update_empty_selection_is_noop(
+    tracking_repository, workspace_id
+):
+    assert tracking_repository.bulk_update(
+        workspace_id, "cluster", [], status="handled"
+    ) == 0

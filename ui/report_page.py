@@ -217,6 +217,68 @@ def _render_tracking_form(
         st.rerun()
 
 
+def _render_bulk_tracking(
+    tracking_repository: ReportTrackingRepository,
+    workspace_id: str,
+    scope: str,
+    reports: list[dict],
+    flash_key: str,
+) -> None:
+    with st.expander(f"批量处理当前 {len(reports)} 份报告"):
+        st.caption(
+            "按当前筛选结果批量更新。可先用产品、严重度或处理状态缩小范围；"
+            "负责人 / 备注留空时保留各报告原值。"
+        )
+
+        with st.form(key=f"bulk_tracking_{scope}"):
+            c1, c2, c3 = st.columns([1.1, 1.2, 2.4])
+
+            with c1:
+                batch_status_label = st.selectbox(
+                    "批量状态",
+                    list(TRACKING_OPTION_TO_STATUS),
+                    index=1,
+                    key=f"bulk_tracking_status_{scope}",
+                )
+
+            with c2:
+                batch_owner = st.text_input(
+                    "批量负责人",
+                    placeholder="留空保留原值",
+                    key=f"bulk_tracking_owner_{scope}",
+                )
+
+            with c3:
+                batch_note = st.text_input(
+                    "批量备注",
+                    placeholder="留空保留原值",
+                    max_chars=500,
+                    key=f"bulk_tracking_note_{scope}",
+                )
+
+            confirmed = st.checkbox(
+                f"确认更新这 {len(reports)} 份报告",
+                key=f"bulk_tracking_confirm_{scope}",
+            )
+            submitted = st.form_submit_button("批量更新")
+
+        if submitted:
+            if not confirmed:
+                st.warning("请先勾选确认，再执行批量更新。")
+                return
+
+            changed = tracking_repository.bulk_update(
+                workspace_id,
+                scope,
+                [report["id"] for report in reports],
+                status=TRACKING_OPTION_TO_STATUS[batch_status_label],
+                owner=batch_owner,
+                note=batch_note,
+            )
+            st.session_state[flash_key] = f"已批量更新 {changed} 份报告。"
+            st.rerun()
+
+
 def _render_reports(
     report_repository: ReportRepository,
     tracking_repository: ReportTrackingRepository,
@@ -292,6 +354,13 @@ def _render_reports(
         return
 
     st.caption(f"共 {len(reports)} / {len(base_reports)} 份报告")
+    _render_bulk_tracking(
+        tracking_repository,
+        workspace_id,
+        "feedback",
+        reports,
+        "tracking_flash_feedback",
+    )
 
     for report in reports:
         entry = tracking_entries[report["id"]]
@@ -505,6 +574,14 @@ def _render_cluster_reports(
         return
 
     st.caption(f"共 {len(reports)} / {len(all_reports)} 份簇报告")
+    _render_bulk_tracking(
+        tracking_repository,
+        workspace_id,
+        "cluster",
+        reports,
+        "tracking_flash_cluster",
+    )
+
     previous_snapshots = _previous_snapshots(
         report_repository, workspace_id, reports
     )
