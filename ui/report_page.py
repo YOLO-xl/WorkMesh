@@ -101,7 +101,11 @@ def render(db_path=None) -> None:
     c5.metric("LLM 生成", stats["llm_total"])
 
     tab_reports, tab_clusters, tab_llm = st.tabs(
-        ["诊断报告", "簇报告", "LLM 配置"]
+        [
+            f"诊断报告 {stats['total']}",
+            f"簇报告 {cluster_stats['total']}",
+            "LLM 配置",
+        ]
     )
 
     with tab_reports:
@@ -268,6 +272,12 @@ def _render_cluster_reports(
             "到「问题聚类」展开一个簇，点「生成簇报告」；"
             "报告会汇总影响面、现象分布，并抽样成员做单条诊断。",
         )
+
+        if st.button("去问题聚类生成", key="cluster_report_goto_cluster"):
+            st.session_state["page_navigation"] = "问题聚类"
+            st.session_state["wm_view"] = "module"
+            st.rerun()
+
         return
 
     keyword = st.text_input(
