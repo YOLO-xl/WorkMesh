@@ -24,6 +24,102 @@ CONFIG_PATH = CONFIG_DIR / "llm.local.json"
 DEFAULT_MODEL = "gpt-4o-mini"
 DEFAULT_TIMEOUT = 30.0
 
+CUSTOM_PROVIDER_ID = "custom"
+CUSTOM_MODEL_OPTION = "自定义模型"
+
+
+@dataclass(frozen=True)
+class LLMProvider:
+    """一个 OpenAI 兼容服务商的预设。base_url 为空表示由用户自己填。"""
+
+    id: str
+    label: str
+    base_url: str
+    models: tuple[str, ...]
+    note: str = ""
+
+    @property
+    def default_model(self) -> str:
+        return self.models[0] if self.models else DEFAULT_MODEL
+
+
+# 只收录官方或广泛使用的 OpenAI 兼容入口；模型名保持可编辑，预设只是省手填。
+LLM_PROVIDERS: tuple[LLMProvider, ...] = (
+    LLMProvider(
+        "openai",
+        "OpenAI 官方",
+        "https://api.openai.com/v1",
+        ("gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "o3-mini"),
+        "官方地址；国内网络直连可能不稳定。",
+    ),
+    LLMProvider(
+        "deepseek",
+        "DeepSeek",
+        "https://api.deepseek.com/v1",
+        ("deepseek-chat", "deepseek-reasoner"),
+        "兼容 OpenAI 接口，推理任务可换 deepseek-reasoner。",
+    ),
+    LLMProvider(
+        "qwen",
+        "通义千问（DashScope 兼容模式）",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        ("qwen-plus", "qwen-max", "qwen-turbo"),
+        "使用 DashScope 的 OpenAI 兼容入口，不是原生 DashScope SDK。",
+    ),
+    LLMProvider(
+        "kimi",
+        "月之暗面 Kimi",
+        "https://api.moonshot.cn/v1",
+        ("moonshot-v1-8k", "moonshot-v1-32k", "kimi-k2"),
+        "长上下文场景注意选模型窗口，否则长证据清单会被截断。",
+    ),
+    LLMProvider(
+        "zhipu",
+        "智谱 GLM",
+        "https://open.bigmodel.cn/api/paas/v4",
+        ("glm-4-flash", "glm-4-air", "glm-4-plus"),
+        "兼容 OpenAI 接口，flash 档响应更快、成本更低。",
+    ),
+    LLMProvider(
+        "siliconflow",
+        "SiliconFlow 硅基流动",
+        "https://api.siliconflow.cn/v1",
+        ("deepseek-ai/DeepSeek-V3", "Qwen/Qwen2.5-72B-Instruct"),
+        "模型名以平台控制台为准，可直接改成平台上开通的模型。",
+    ),
+    LLMProvider(
+        "ollama",
+        "本地 Ollama",
+        "http://localhost:11434/v1",
+        ("qwen2.5:7b", "llama3.1:8b", "deepseek-r1:7b"),
+        "本地服务不校验 Key，随便填一个占位值即可，例如 ollama。",
+    ),
+    LLMProvider(
+        CUSTOM_PROVIDER_ID,
+        "自定义 / 自建网关",
+        "",
+        (),
+        "自己填写兼容 OpenAI 的 Base URL 与模型名。",
+    ),
+)
+
+PROVIDER_BY_ID = {provider.id: provider for provider in LLM_PROVIDERS}
+
+
+def detect_provider(base_url: str) -> str:
+    """按 Base URL 反查预设；空地址视为 OpenAI 官方默认入口。"""
+
+    normalized = (base_url or "").strip().rstrip("/")
+
+    if not normalized:
+        return "openai"
+
+    for provider in LLM_PROVIDERS:
+        if provider.base_url and normalized == provider.base_url.rstrip("/"):
+            return provider.id
+
+    return CUSTOM_PROVIDER_ID
+
 
 @dataclass(frozen=True)
 class LLMSettings:

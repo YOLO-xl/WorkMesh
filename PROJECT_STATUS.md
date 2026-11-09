@@ -49,6 +49,7 @@ v0.6.0-dev
 - [x] 规则诊断 + 可选 LLM 诊断（引用校验，未配置 LLM 时自动退回规则）
 - [x] 诊断报告中心：归档 / 检索 / 下载 / 删除，内容 hash 去重
 - [x] LLM 配置双通道（环境变量优先 / 本机文件兜底）、连接测试与清除
+- [x] 主流服务商预设与模型选择（OpenAI / DeepSeek / 通义 / Kimi / 智谱 / SiliconFlow / Ollama / 自定义）
 - [x] GitHub 仓库公开并持续推送（暂无版本 tag / release）
 - [x] 自动化测试 104 项
 

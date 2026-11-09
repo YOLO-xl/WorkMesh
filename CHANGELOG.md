@@ -21,6 +21,8 @@
   两步删除；同一页签「LLM 配置」管理接入。
 - LLM 配置双通道（`services/llm_config.py`）：环境变量优先、本机
   `.workmesh/llm.local.json` 兜底；支持保存、测试连接、清除，文件 0600 原子写。
+- LLM 服务商预设：OpenAI、DeepSeek、通义千问、Kimi、智谱 GLM、SiliconFlow、
+  本地 Ollama 与自定义网关；切换服务商自动带出兼容地址和常用模型，模型仍可改。
 - 诊断页新增「生成后自动归档到报告中心」与「保存到报告中心」入口。
 - `tests/test_report_center.py`：报告归档与 LLM 配置 9 项回归，测试总数 104。
 

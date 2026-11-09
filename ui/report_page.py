@@ -14,9 +14,13 @@ from database.report_repository import ReportRepository
 from services.diagnosis_service import CONFIDENCE_LABELS
 from services.llm_config import (
     CONFIG_PATH,
+    CUSTOM_MODEL_OPTION,
+    LLM_PROVIDERS,
+    PROVIDER_BY_ID,
     LLMSettings,
     clear_settings,
     config_source_label,
+    detect_provider,
     resolve_settings,
     save_settings,
     test_connection,
@@ -25,6 +29,34 @@ from ui.theme import empty_state, hero, section, tag
 
 
 SEVERITY_LABELS = {"high": "高", "medium": "中", "low": "低"}
+
+
+def _on_llm_provider_change() -> None:
+    """切换服务商时同步地址与模型，避免把上一家的地址带过去。"""
+
+    provider = PROVIDER_BY_ID.get(st.session_state.get("llm_provider"))
+
+    if not provider:
+        return
+
+    st.session_state["llm_base_url"] = provider.base_url
+    st.session_state["llm_model_choice"] = (
+        provider.default_model if provider.models else CUSTOM_MODEL_OPTION
+    )
+    st.session_state["llm_custom_model"] = ""
+    st.session_state["llm_api_key"] = ""
+
+
+def _reset_llm_form_state() -> None:
+    for key in (
+        "llm_provider",
+        "llm_base_url",
+        "llm_model_choice",
+        "llm_custom_model",
+        "llm_api_key",
+        "llm_timeout",
+    ):
+        st.session_state.pop(key, None)
 
 
 def _fmt_time(value: str | None) -> str:
@@ -187,6 +219,8 @@ def _render_llm_config() -> None:
     )
 
     status_kind = "正常" if settings.available else "未配置"
+    detected_provider = detect_provider(settings.base_url)
+    provider_name = PROVIDER_BY_ID[detected_provider].label
     st.markdown(
         f"""
         <div class="wm-panel">
@@ -195,6 +229,8 @@ def _render_llm_config() -> None:
             </p>
             <div class="wm-panel-row"><span>配置来源</span>
                 <span class="wm-row-meta">{config_source_label(settings.source)}</span></div>
+            <div class="wm-panel-row"><span>服务商</span>
+                <span class="wm-row-meta">{escape(provider_name)}</span></div>
             <div class="wm-panel-row"><span>模型</span>
                 <span class="wm-row-meta">{escape(settings.model)}</span></div>
             <div class="wm-panel-row"><span>接口地址</span>
@@ -214,49 +250,113 @@ def _render_llm_config() -> None:
 
     current_key = "" if settings.source == "env" else settings.api_key
 
-    col1, col2 = st.columns([1.6, 1])
+    provider_ids = [provider.id for provider in LLM_PROVIDERS]
+    provider_labels = {provider.id: provider.label for provider in LLM_PROVIDERS}
 
-    with col1:
-        api_key = st.text_input(
-            "API Key",
-            value="",
-            type="password",
-            placeholder=(
-                settings.masked_key() or "sk-..."
-            ),
-            key="llm_api_key",
-            help="留空表示沿用已保存的 Key；只保存在本机，不会提交到仓库。",
+    st.session_state.setdefault("llm_provider", detected_provider)
+    active_provider = PROVIDER_BY_ID.get(
+        st.session_state["llm_provider"],
+        PROVIDER_BY_ID[detected_provider],
+    )
+
+    st.session_state.setdefault(
+        "llm_base_url", settings.base_url or active_provider.base_url
+    )
+
+    saved_model = (settings.model or "").strip()
+    model_options = list(active_provider.models)
+
+    if saved_model and saved_model not in model_options:
+        model_options.append(saved_model)
+
+    if active_provider.models:
+        model_options.append(CUSTOM_MODEL_OPTION)
+
+    if active_provider.models:
+        default_choice = (
+            saved_model
+            if saved_model in active_provider.models
+            else CUSTOM_MODEL_OPTION
+        )
+        st.session_state.setdefault("llm_model_choice", default_choice)
+
+    if "llm_custom_model" not in st.session_state:
+        st.session_state["llm_custom_model"] = (
+            saved_model if saved_model not in active_provider.models else ""
         )
 
-    with col2:
-        model = st.text_input(
+    provider_id = st.selectbox(
+        "服务商",
+        options=provider_ids,
+        format_func=lambda value: provider_labels[value],
+        key="llm_provider",
+        on_change=_on_llm_provider_change,
+        help="只列出 OpenAI 兼容入口；自建网关选「自定义」。",
+    )
+
+    provider = PROVIDER_BY_ID[provider_id]
+
+    if provider.note:
+        st.caption(provider.note)
+
+    if provider.models:
+        model_choice = st.selectbox(
             "模型",
-            value=settings.model,
-            key="llm_model",
+            options=model_options,
+            key="llm_model_choice",
+        )
+
+        if model_choice == CUSTOM_MODEL_OPTION:
+            model = st.text_input(
+                "模型名称",
+                placeholder="填写服务商实际提供的模型 ID",
+                key="llm_custom_model",
+            )
+        else:
+            model = model_choice
+    else:
+        model = st.text_input(
+            "模型名称",
+            placeholder="填写服务商实际提供的模型 ID",
+            key="llm_custom_model",
         )
 
     base_url = st.text_input(
         "接口地址（Base URL）",
-        value=settings.base_url,
         placeholder="https://api.openai.com/v1 或自建网关地址",
         key="llm_base_url",
+        help="切换服务商会自动填入官方兼容地址，也可以手动改成网关地址。",
     )
 
-    timeout = st.number_input(
-        "超时（秒）",
-        min_value=5,
-        max_value=120,
-        value=int(settings.timeout),
-        step=5,
-        key="llm_timeout",
-    )
+    col_key, col_timeout = st.columns([2, 1])
+
+    with col_key:
+        api_key = st.text_input(
+            "API Key",
+            value="",
+            type="password",
+            placeholder=settings.masked_key() or "sk-...",
+            key="llm_api_key",
+            help="留空表示沿用已保存的 Key；切换服务商后请填写新 Key。",
+        )
+
+    with col_timeout:
+        timeout = st.number_input(
+            "超时（秒）",
+            min_value=5,
+            max_value=120,
+            value=int(settings.timeout),
+            step=5,
+            key="llm_timeout",
+        )
 
     draft_key = api_key.strip() or current_key
+    model_name = model.strip() or provider.default_model
 
     draft = LLMSettings(
         api_key=draft_key,
         base_url=base_url.strip(),
-        model=model.strip() or settings.model,
+        model=model_name,
         timeout=float(timeout),
         source=settings.source,
     )
@@ -268,7 +368,7 @@ def _render_llm_config() -> None:
             save_settings(
                 api_key=api_key if api_key.strip() else None,
                 base_url=base_url,
-                model=model,
+                model=model_name,
                 timeout=timeout,
             )
             st.success("配置已保存，下一次诊断立即生效。")
@@ -290,6 +390,7 @@ def _render_llm_config() -> None:
     with action3:
         if st.button("清除本机配置", key="llm_clear"):
             clear_settings()
+            _reset_llm_form_state()
             st.success("本机配置已清除；若仍显示已配置，说明环境变量还在生效。")
             st.rerun()
 

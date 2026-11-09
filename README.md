@@ -42,6 +42,8 @@ WorkMesh 是一个面向企业技术支持与生产问题排查场景的 AI 工�
   内容 hash 去重，同一反馈同一结论不重复入库。
 - LLM 配置双通道：环境变量优先、本机配置文件兜底；支持保存、测试连接、清除，
   文件以 0600 权限存放，诊断服务即时读取。
+- LLM 服务商预设：OpenAI、DeepSeek、通义千问、Kimi、智谱 GLM、SiliconFlow、
+  本地 Ollama、自定义网关；切换后自动填入兼容地址与常用模型。
 - 统一 Evidence 证据模型：日志、反馈等接入后转换为同一结构并持久化。
 - 证据关联分析：按 Trace ID / Request ID / UID / 错误码 / 服务与时间窗口计算关联分数。
 - 「证据关联」页面：证据接入、生成问题上下文、回看已保存关联。
@@ -95,8 +97,10 @@ pytest -q
 cp .env.example .env   # 填入 OPENAI_API_KEY、OPENAI_BASE_URL 等
 ```
 
-或启动后进入「报告中心 → LLM 配置」，填写 API Key / 模型 / Base URL / 超时，
-点「保存配置」写入 `.workmesh/llm.local.json`（权限 600，已被 `.gitignore` 忽略）。
+或启动后进入「报告中心 → LLM 配置」，先选服务商（OpenAI / DeepSeek / 通义千问 /
+Kimi / 智谱 / SiliconFlow / 本地 Ollama / 自定义），地址与模型会自动带出，
+再填 API Key 与超时；点「保存配置」写入 `.workmesh/llm.local.json`
+（权限 600，已被 `.gitignore` 忽略）。
 页面上可直接「测试连接」，也可以「清除本机配置」。
 
 ## 快速体验证据关联

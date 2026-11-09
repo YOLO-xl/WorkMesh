@@ -6,6 +6,12 @@ import pytest
 
 from database.report_repository import ReportRepository
 from services import llm_config
+from services.llm_config import (
+    CUSTOM_PROVIDER_ID,
+    LLM_PROVIDERS,
+    PROVIDER_BY_ID,
+    detect_provider,
+)
 
 
 def _result(markdown: str = "# 报告\n\n内容", generated_by: str = "rule") -> dict:
@@ -178,6 +184,32 @@ def test_connection_without_key_reports_error():
 
     assert result["ok"] is False
     assert "API Key" in result["message"]
+
+
+def test_provider_presets_cover_mainstream_services():
+    provider_ids = [provider.id for provider in LLM_PROVIDERS]
+    base_urls = [provider.base_url for provider in LLM_PROVIDERS]
+
+    assert set(provider_ids) >= {
+        "openai", "deepseek", "qwen", "kimi", "zhipu", "siliconflow", "ollama"
+    }
+    assert len(provider_ids) == len(set(provider_ids))
+    assert len(base_urls) == len(set(base_urls))
+    assert PROVIDER_BY_ID[CUSTOM_PROVIDER_ID].models == ()
+
+    for provider in LLM_PROVIDERS:
+        assert provider.label
+        if provider.id != CUSTOM_PROVIDER_ID:
+            assert provider.base_url.startswith("http")
+            assert provider.models
+
+
+def test_detect_provider_from_base_url():
+    assert detect_provider("") == "openai"
+    assert detect_provider("https://api.deepseek.com/v1/") == "deepseek"
+    assert detect_provider("https://dashscope.aliyuncs.com/compatible-mode/v1") == "qwen"
+    assert detect_provider("http://localhost:11434/v1") == "ollama"
+    assert detect_provider("https://gateway.example.com/v1") == CUSTOM_PROVIDER_ID
 
 
 def test_connection_with_fake_client():
