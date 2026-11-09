@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.7.0-dev] - 2026-11-09
+
+### Added
+- 周期性分析报告（Schema v6 `periodic_reports`，`PeriodicReportService` /
+  `PeriodicReportRepository`）：按日期区间汇总反馈量、涉及用户、每日趋势、
+  「产品 + 错误码」主要问题、无码现象词、报告沉淀与处理状态；
+  支持全产品 / 单产品范围，内容 hash 去重、关键词检索、Markdown 下载与两步删除。
+- 报告中心新增「周期报告」页签，与诊断报告、簇报告、LLM 配置并列；
+  报告总数合并三类归档，待处理仍只统计可跟踪的诊断与簇报告。
+- 周期报告显式写出统计口径与结论边界：只做汇总，不判断根因，不把簇当根因结论。
+- 证据上下文新增跨源统计（`by_type` / `by_connector` / `source_kinds`），
+  「证据关联」结果页显示跨源分布。
+- `tests/test_periodic_report.py` 4 项回归，测试总数 126。
+
+### Changed
+- Migration 升级到 v6；`tests/test_report_tracking.py` 的版本断言改为跟
+  `CURRENT_VERSION` 派生，避免每次加迁移都要改测试。
+
+### Not done
+- 真实 Elasticsearch / Prometheus 实例联调与阈值校准：本机无可用实例，跳过。
+- 真实 LLM 凭据线上诊断：未提供 Key，跳过。
+- Jaeger / Tempo、OpenSearch / Loki 真实接入：无实例，仅保留后续扩展位。
+- 大文件后台导入与分块解析：未完成，当前仍整文件读入内存。
+
 ## [0.6.0-dev] - 2026-11-09
 
 ### Added

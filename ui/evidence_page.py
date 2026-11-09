@@ -517,6 +517,16 @@ def _render_context_result(context: dict) -> None:
     c4.metric("上下文证据", counts.get("context", 0))
     c5.metric("其他反馈", counts["related_feedback"])
 
+    by_type = counts.get("by_type") or {}
+    if by_type:
+        parts = [
+            f"{TYPE_LABELS.get(key, key)} {value} 条"
+            for key, value in sorted(
+                by_type.items(), key=lambda item: item[1], reverse=True
+            )
+        ]
+        st.caption("跨源分布：" + " ｜ ".join(parts))
+
     st.info(context["summary"])
 
     st.markdown("#### 已验证事实")

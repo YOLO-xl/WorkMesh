@@ -2,7 +2,7 @@
 
 import re
 
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 import streamlit as st
 
@@ -12,8 +12,10 @@ from database.cluster_report_repository import ClusterReportRepository
 from database.feedback_repository import FeedbackRepository
 from database.migration import initialize_database
 from database.report_repository import ReportRepository
+from database.periodic_report_repository import PeriodicReportRepository
 from database.report_tracking_repository import ReportTrackingRepository
 from services.diagnosis_service import CONFIDENCE_LABELS
+from services.periodic_report_service import PeriodicReportService
 from services.llm_config import (
     CONFIG_PATH,
     CUSTOM_MODEL_OPTION,
@@ -102,16 +104,20 @@ def render(db_path=None) -> None:
     report_repository = ReportRepository(db_path)
     cluster_report_repository = ClusterReportRepository(db_path)
     tracking_repository = ReportTrackingRepository(db_path)
+    periodic_repository = PeriodicReportRepository(db_path)
+    periodic_service = PeriodicReportService(db_path)
     workspace_id = feedback_repository.get_default_workspace()
 
     stats = report_repository.stats(workspace_id)
     cluster_stats = cluster_report_repository.stats(workspace_id)
-    total_reports = stats["total"] + cluster_stats["total"]
+    periodic_stats = periodic_repository.stats(workspace_id)
+    actionable_total = stats["total"] + cluster_stats["total"]
+    total_reports = actionable_total + periodic_stats["total"]
 
     tracking_stats = tracking_repository.stats(workspace_id)
     pending_reports = max(
         0,
-        total_reports - tracking_stats["handled"] - tracking_stats["ignored"],
+        actionable_total - tracking_stats["handled"] - tracking_stats["ignored"],
     )
 
     c1, c2, c3, c4, c5 = st.columns(5)
@@ -121,10 +127,11 @@ def render(db_path=None) -> None:
     c4.metric("覆盖反馈", stats["covered_feedback"])
     c5.metric("簇报告", cluster_stats["total"])
 
-    tab_reports, tab_clusters, tab_llm = st.tabs(
+    tab_reports, tab_clusters, tab_periodic, tab_llm = st.tabs(
         [
             f"诊断报告 {stats['total']}",
             f"簇报告 {cluster_stats['total']}",
+            f"周期报告 {periodic_stats['total']}",
             "LLM 配置",
         ]
     )
@@ -135,6 +142,11 @@ def render(db_path=None) -> None:
     with tab_clusters:
         _render_cluster_reports(
             cluster_report_repository, tracking_repository, workspace_id
+        )
+
+    with tab_periodic:
+        _render_periodic_reports(
+            periodic_repository, periodic_service, workspace_id
         )
 
     with tab_llm:
@@ -717,6 +729,159 @@ def _render_cluster_reports(
                     if st.button(
                         "删除",
                         key=f"cluster_report_delete_{report['id']}",
+                    ):
+                        st.session_state[pending_key] = report["id"]
+                        st.rerun()
+
+
+def _render_periodic_reports(
+    report_repository: PeriodicReportRepository,
+    report_service: PeriodicReportService,
+    workspace_id: str,
+) -> None:
+    section(
+        "周期报告",
+        "按日期区间汇总反馈、主要问题、无码现象和报告处理情况；只做汇总，不输出根因结论",
+    )
+    _show_tracking_flash("periodic_flash")
+
+    products = report_service.available_products(workspace_id)
+    product_options = ["全部产品"] + products
+
+    c1, c2, c3 = st.columns([1.1, 1.1, 1.4])
+
+    with c1:
+        start = st.date_input(
+            "开始日期",
+            value=date.today() - timedelta(days=6),
+            key="periodic_start",
+        )
+
+    with c2:
+        end = st.date_input(
+            "结束日期",
+            value=date.today(),
+            key="periodic_end",
+        )
+
+    with c3:
+        product_filter = st.selectbox(
+            "产品范围",
+            product_options,
+            key="periodic_product",
+        )
+
+    if st.button("生成周期报告", key="periodic_generate", type="primary"):
+        try:
+            result = report_service.build(
+                workspace_id,
+                start,
+                end,
+                None if product_filter == "全部产品" else product_filter,
+            )
+            report_id, created = report_repository.save(
+                workspace_id,
+                result["period_start"],
+                result["period_end"],
+                result["stats"]["product"],
+                result,
+            )
+            st.session_state["periodic_flash"] = (
+                "周期报告已生成。"
+                if created
+                else "相同内容的周期报告已存在，未重复归档。"
+            )
+            st.rerun()
+        except ValueError as exc:
+            st.error(str(exc))
+
+    keyword = st.text_input(
+        "搜索周期报告",
+        placeholder="标题、产品或正文关键词",
+        key="periodic_keyword",
+        label_visibility="collapsed",
+    )
+
+    reports = report_repository.list_reports(
+        workspace_id,
+        keyword=keyword or None,
+        limit=100,
+    )
+
+    if not reports:
+        empty_state(
+            "还没有周期报告",
+            "选好日期区间和产品范围，点「生成周期报告」；"
+            "同一区间、同一产品、同样内容不会重复入库。",
+        )
+        return
+
+    st.caption(f"共 {len(reports)} 份周期报告")
+
+    for report in reports:
+        stats = report["stats"]
+        label = (
+            f"{_fmt_time(report['created_at'])} · {report['period_start']}"
+            f" ~ {report['period_end']} · {report['product'] or '全产品'}"
+        )
+
+        with st.expander(label):
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("反馈数", stats.get("feedback_total", 0))
+            m2.metric("涉及用户", stats.get("unique_users", 0))
+            m3.metric("主要问题", len(stats.get("top_issues") or []))
+            reports_stats = stats.get("reports") or {}
+            m4.metric(
+                "报告待处理",
+                reports_stats.get("pending", 0),
+            )
+
+            st.caption(
+                f"归档时间：{_fmt_time(report['created_at'])}｜"
+                f"产品范围：{report['product'] or '全部产品'}｜"
+                f"上一周期反馈 {stats.get('feedback_previous', 0)} 条"
+            )
+
+            st.markdown(report["markdown"])
+
+            download_col, delete_col = st.columns([3, 1])
+
+            with download_col:
+                st.download_button(
+                    "下载 Markdown",
+                    data=report["markdown"].encode("utf-8"),
+                    file_name=_safe_file_name(report["title"]),
+                    mime="text/markdown",
+                    key=f"periodic_download_{report['id']}",
+                )
+
+            with delete_col:
+                pending_key = "periodic_report_delete_pending"
+                is_pending = st.session_state.get(pending_key) == report["id"]
+
+                if is_pending:
+                    st.warning("确认删除这份周期报告？")
+
+                    if st.button(
+                        "确认删除",
+                        key=f"periodic_delete_confirm_{report['id']}",
+                        type="primary",
+                    ):
+                        report_repository.delete(report["id"])
+                        st.session_state.pop(pending_key, None)
+                        st.success("周期报告已删除。")
+                        st.rerun()
+
+                    if st.button(
+                        "取消",
+                        key=f"periodic_delete_cancel_{report['id']}",
+                    ):
+                        st.session_state.pop(pending_key, None)
+                        st.rerun()
+                else:
+                    if st.button(
+                        "删除",
+                        key=f"periodic_delete_{report['id']}",
                     ):
                         st.session_state[pending_key] = report["id"]
                         st.rerun()

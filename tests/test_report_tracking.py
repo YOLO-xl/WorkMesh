@@ -3,6 +3,7 @@
 import pytest
 
 from database.connection import get_connection
+from database.migration import CURRENT_VERSION
 from database.report_tracking_repository import ReportTrackingRepository
 
 
@@ -18,7 +19,10 @@ def test_migration_creates_report_tracking(db_path):
 
     assert {"workspace_id", "report_scope", "report_id", "status", "owner", "note",
             "updated_at"} <= columns
-    assert conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 5
+    assert (
+        conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0]
+        == CURRENT_VERSION
+    )
 
 
 def test_untracked_report_defaults_to_pending(

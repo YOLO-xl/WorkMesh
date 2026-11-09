@@ -7,6 +7,7 @@
 4. 把关联结果落库，并区分「已验证事实」与「待验证假设」。
 """
 
+from collections import Counter
 from datetime import timedelta
 from typing import Iterable, Optional
 
@@ -192,6 +193,15 @@ class EvidenceService:
                 relation=None,
             )
 
+        type_counts = Counter(
+            result.evidence.evidence_type or "unknown"
+            for result in results
+        )
+        connector_counts = Counter(
+            result.evidence.connector_type or result.evidence.evidence_type or "unknown"
+            for result in results
+        )
+
         facts = self._build_facts(anchor, results)
         hypotheses = self._build_hypotheses(
             anchor, results, len(candidates), len(related_feedback), min_score
@@ -213,6 +223,9 @@ class EvidenceService:
                 "medium": sum(1 for item in results if item.strength == "medium"),
                 "context": sum(1 for item in results if item.relation == "context"),
                 "persisted": sum(1 for item in matches if item["persisted"]),
+                "source_kinds": len(type_counts),
+                "by_type": dict(type_counts),
+                "by_connector": dict(connector_counts),
             },
             "summary": self._build_summary(anchor, results, len(candidates)),
         }
@@ -359,7 +372,15 @@ class EvidenceService:
         context_count = sum(1 for item in results if item.relation == "context")
         top = results[0]
 
-        scope = f"共找到 {len(results)} 条关联证据，其中强关联 {strong} 条"
+        sources = len({
+            item.evidence.evidence_type
+            for item in results
+            if item.evidence.evidence_type
+        })
+        scope = (
+            f"共找到 {len(results)} 条关联证据（跨 {sources} 类数据源），"
+            f"其中强关联 {strong} 条"
+        )
         if context_count:
             scope = f"{scope}、上下文证据 {context_count} 条"
 

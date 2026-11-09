@@ -162,7 +162,7 @@ st.sidebar.radio(
 )
 
 st.sidebar.divider()
-st.sidebar.caption("v0.6.0-dev · 本地运行")
+st.sidebar.caption("v0.7.0-dev · 本地运行")
 
 current_label = (
     "首页"

@@ -1,7 +1,7 @@
 # WorkMesh 开发进度
 
 ## 当前版本
-v0.6.0-dev
+v0.7.0-dev
 
 ## 项目定位
 面向企业多来源信息的 AI 分析工作台。
@@ -24,12 +24,12 @@ v0.6.0-dev
 - [x] 整体架构文档初稿
 - [x] 性能设计文档初稿
 
-## 已完成的证据能力（v0.6.0-dev）
+## 已完成的证据能力（v0.7.0-dev）
 - [x] 统一 Evidence 证据模型（core/evidence.py）
 - [x] 证据关联引擎（core/correlation.py）
 - [x] 证据表与关联表（Schema v2 Migration）
 - [x] EvidenceRepository 数据访问层
-- [x] 版本化 Migration 框架（v1 → v5 可增量升级）
+- [x] 版本化 Migration 框架（v1 → v6 可增量升级）
 - [x] 证据接入：本地 JSON / JSONL / CSV、Elasticsearch 日志
 - [x] 问题上下文生成：已验证事实 / 待验证假设分离
 - [x] 「证据关联」页面
@@ -37,7 +37,7 @@ v0.6.0-dev
 
 ## 已完成（数据与平台能力）
 - [x] SQLite 连接层（database/connection.py，支持 WORKMESH_DB_PATH 覆盖库路径）
-- [x] 版本化 Migration（v1 → v5）：证据表 / 关联表 / 诊断报告表 / 簇报告表 / 处理记录表
+- [x] 版本化 Migration（v1 → v6）：证据表 / 关联表 / 诊断报告表 / 簇报告表 / 处理记录表 / 周期报告表
 - [x] FeedbackRepository / EvidenceRepository 数据访问层
 - [x] 数据持久化与字段标准化
 - [x] 导入批次管理与重复文件检测
@@ -56,16 +56,20 @@ v0.6.0-dev
 - [x] LLM 配置双通道（环境变量优先 / 本机文件兜底）、连接测试与清除
 - [x] 主流服务商预设与模型选择（OpenAI / DeepSeek / 通义 / Kimi / 智谱 / SiliconFlow / Ollama / 自定义）
 - [x] GitHub 仓库公开并持续推送（暂无版本 tag / release）
-- [x] 自动化测试 122 项
+- [x] 周期性分析报告（Schema v6 `periodic_reports`）：按日期区间汇总反馈量、用户数、
+  产品 / 错误码主要问题、无码现象词、报告沉淀与处理状态；支持全产品与单产品筛选，
+  内容 hash 去重、Markdown 下载与两步删除
+- [x] 跨数据源证据上下文：关联结果按 evidence_type / connector 统计，
+  页面显示「跨源分布」
+- [x] 自动化测试 126 项
 
 ## 进行中
 - [ ] 真实 Elasticsearch / Prometheus 实例联调（本机暂无可访问环境）
 - [ ] 真实 LLM 凭据接入（配置与测试通道已就绪，当前未填真实 Key）
 
 ## 待完成
-- [ ] 后台导入任务与分块文件解析（当前整文件读入内存）
-- [ ] Jaeger / Tempo 链路追踪连接器
-- [ ] 分析报告沉淀扩展到跨反馈、跨问题簇的周期性报告（当前为单条诊断归档 + 单簇快照）
+- [ ] 后台导入任务与分块文件解析（当前整文件读入内存；本轮未做半成品）
+- [ ] Jaeger / Tempo 链路追踪连接器（无真实实例，未联调）
 - [ ] 聚类结果人工合并 / 拆分并写回标签
 - [ ] 按产品 + 7 天时间窗分块，支撑万级反馈增量归簇
 - [ ] embedding / 语义聚类增强
