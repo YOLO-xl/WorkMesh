@@ -199,3 +199,188 @@ def test_llm_without_citations_falls_back(prepared, db_path):
 
     assert result["generated_by"] == "rule"
     assert "没有任何证据引用" in result["llm_error"]
+
+
+LOGIN_FEEDBACK_OVERRIDES = {
+    "product": "账号服务",
+    "error_code": "E5001",
+    "description": "收不到验证码，登录不上",
+}
+
+
+def _login_service(evidence_service, provider=None):
+    """构造一条登录场景反馈对应的单条诊断服务。"""
+    return DiagnosisService(
+        evidence_service=evidence_service,
+        connector_provider=provider,
+    )
+
+
+def _login_feedback(make_feedback):
+    return make_feedback(**LOGIN_FEEDBACK_OVERRIDES)
+
+
+def test_diagnosis_connector_provider_queries_successfully(
+    db_path, workspace_id, make_feedback
+):
+    feedback_id = _login_feedback(make_feedback)
+    evidence_service = EvidenceService(db_path=db_path)
+    calls = []
+
+    def fake_provider(source, feedback):
+        calls.append(source["id"])
+        if source["id"] == "es_sms":
+            return [{
+                "uid": feedback.get("uid"),
+                "error_code": feedback.get("error_code"),
+                "message": "短信网关记录",
+            }]
+        if source["id"] == "prom_sms":
+            return [{"value": 0.02}]
+        return []
+
+    service = _login_service(evidence_service, fake_provider)
+    result = service.build(
+        workspace_id,
+        feedback_id,
+        manual_answers={"trace_lookup": True},
+    )
+
+    scenario = result["scenario"]
+    assert scenario["scenario_id"] == "login.code_delivery"
+    assert {"es_sms", "prom_sms"} <= set(calls)
+    assert scenario["sources"]["es_sms"]["available"] is True
+    assert scenario["sources"]["es_sms"]["count"] == 1
+    assert scenario["sources"]["prom_sms"]["available"] is True
+    assert scenario["signals"]["provider_error_rate"] == 0.02
+    assert scenario["status"] != "blocked"
+
+
+def test_diagnosis_without_provider_reports_missing_provider(
+    db_path, workspace_id, make_feedback
+):
+    feedback_id = _login_feedback(make_feedback)
+    evidence_service = EvidenceService(db_path=db_path)
+    service = _login_service(evidence_service)
+    result = service.build(
+        workspace_id,
+        feedback_id,
+        manual_answers={"trace_lookup": True},
+    )
+
+    scenario = result["scenario"]
+    assert scenario["sources"]["es_sms"]["available"] is False
+    assert scenario["sources"]["prom_sms"]["available"] is False
+    assert "未配置连接器 Provider" in scenario["sources"]["es_sms"]["reason"]
+    assert any(
+        item["id"] == "es_sms" and "未配置连接器 Provider" in item["reason"]
+        for item in scenario["missing_sources"]
+    )
+
+
+def test_diagnosis_connector_config_missing_reports_error(
+    db_path, workspace_id, make_feedback
+):
+    from services.connector_source_provider import ConnectorSourceProvider
+
+    feedback_id = _login_feedback(make_feedback)
+    evidence_service = EvidenceService(db_path=db_path)
+    service = _login_service(evidence_service, ConnectorSourceProvider({}))
+    result = service.build(
+        workspace_id,
+        feedback_id,
+        manual_answers={"trace_lookup": True},
+    )
+
+    scenario = result["scenario"]
+    for source_id in ("es_sms", "prom_sms"):
+        source = scenario["sources"][source_id]
+        assert source["available"] is False
+        assert "连接器配置错误" in source["reason"]
+        assert "未配置" in source["reason"]
+
+
+def test_diagnosis_connector_failure_keeps_other_sources(
+    db_path, workspace_id, make_feedback
+):
+    feedback_id = _login_feedback(make_feedback)
+    evidence_service = EvidenceService(db_path=db_path)
+
+    def provider(source, feedback):
+        if source["id"] == "es_sms":
+            raise ConnectionError("短信网关连接超时")
+        return [{"value": 0.02}]
+
+    service = _login_service(evidence_service, provider)
+    result = service.build(
+        workspace_id,
+        feedback_id,
+        manual_answers={"trace_lookup": True},
+    )
+
+    scenario = result["scenario"]
+    assert scenario["sources"]["feedback_recent"]["available"] is True
+    assert scenario["sources"]["es_sms"]["available"] is False
+    assert "连接器连接失败" in scenario["sources"]["es_sms"]["reason"]
+    assert scenario["sources"]["prom_sms"]["available"] is True
+    assert result["conclusions"]
+    assert result["generated_by"] == "rule"
+    assert scenario["status"] == "partial"
+
+
+def test_diagnosis_empty_connector_result_marks_unavailable(
+    db_path, workspace_id, make_feedback
+):
+    feedback_id = _login_feedback(make_feedback)
+    evidence_service = EvidenceService(db_path=db_path)
+    service = _login_service(evidence_service, lambda source, feedback: [])
+    result = service.build(
+        workspace_id,
+        feedback_id,
+        manual_answers={"trace_lookup": True},
+    )
+
+    scenario = result["scenario"]
+    for source_id in ("es_sms", "prom_sms"):
+        source = scenario["sources"][source_id]
+        assert source["available"] is False
+        assert source["reason"] == "查询成功但无有效证据"
+    assert scenario["status"] == "partial"
+    assert scenario["sources"]["es_sms"]["count"] == 0
+
+
+def test_diagnosis_without_connector_still_builds_legacy_flow(
+    prepared, db_path
+):
+    workspace_id, feedback_id, evidence_service = prepared
+    service = DiagnosisService(evidence_service=evidence_service)
+    result = service.build(workspace_id, feedback_id, use_llm=False)
+
+    assert result["generated_by"] == "rule"
+    assert result["conclusions"]
+    assert "scenario" in result
+    assert result["context_counts"]
+
+
+def test_diagnosis_unsupported_connector_reports_config_error(
+    db_path, workspace_id, make_feedback
+):
+    feedback_id = _login_feedback(make_feedback)
+    evidence_service = EvidenceService(db_path=db_path)
+
+    def provider(source, feedback):
+        raise ValueError("暂不支持的连接器：clickhouse")
+
+    service = _login_service(evidence_service, provider)
+    result = service.build(
+        workspace_id,
+        feedback_id,
+        manual_answers={"trace_lookup": True},
+    )
+
+    scenario = result["scenario"]
+    for source_id in ("es_sms", "prom_sms"):
+        source = scenario["sources"][source_id]
+        assert source["available"] is False
+        assert "连接器配置错误" in source["reason"]
+        assert "暂不支持" in source["reason"]

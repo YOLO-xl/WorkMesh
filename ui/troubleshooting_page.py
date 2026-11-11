@@ -12,6 +12,11 @@ import pandas as pd
 import streamlit as st
 
 from database.migration import initialize_database
+from services.connector_config import (
+    DEFAULT_ELASTICSEARCH_URL,
+    DEFAULT_PROMETHEUS_URL,
+    build_connector_configs,
+)
 from services.troubleshooting_service import TroubleshootingService
 from services.evidence_service import TYPE_LABELS
 from ui.theme import hero
@@ -78,9 +83,25 @@ def _format_sources(sources: list[dict]) -> pd.DataFrame:
             "数据源": item.get("platform") or item.get("id"),
             "状态": "可用" if item.get("available") else "不可用",
             "命中": item.get("count", 0),
+            "入库": item.get("persisted", "—"),
             "说明": item.get("message") or "—",
         }
         for item in sources
+    ])
+
+
+def _format_external_ingest(reports: list[dict]) -> pd.DataFrame:
+    return pd.DataFrame([
+        {
+            "数据源": item.get("source_name") or item.get("source_id"),
+            "连接器": item.get("connector_type") or "—",
+            "查询命中": item.get("total", 0),
+            "新增入库": item.get("inserted", 0),
+            "已存在": item.get("skipped", 0),
+            "失败": item.get("failed", 0),
+            "说明": item.get("error") or "—",
+        }
+        for item in reports
     ])
 
 
@@ -94,6 +115,7 @@ def _format_query_hits(hits: list[dict]) -> pd.DataFrame:
             "错误码": item.get("error_code") or "—",
             "服务": item.get("service") or "—",
             "关联分": item.get("score", 0),
+            "证据ID": item.get("evidence_id") or "—",
             "关系": {
                 "correlates": "关联",
                 "context": "上下文",
@@ -246,6 +268,30 @@ def _render_query(result: dict) -> None:
             hide_index=True,
         )
 
+    external_ingest = query.get("external_ingest") or []
+    if external_ingest:
+        st.caption(
+            "外部连接器结果已通过统一 Evidence 入口落库；"
+            "同数据源同 record_id 的重复查询只复用已有记录。"
+        )
+        st.dataframe(
+            _format_external_ingest(external_ingest),
+            use_container_width=True,
+            hide_index=True,
+        )
+        failed = [
+            item for item in external_ingest if item.get("failed")
+        ]
+        if failed:
+            st.warning(
+                "以下外部证据未完全入库，诊断只使用成功写入的记录："
+                + "、".join(
+                    f"{item.get('source_name') or item.get('source_id')}"
+                    f"（{item.get('error') or '部分失败'}）"
+                    for item in failed
+                )
+            )
+
     hits = query.get("hits") or []
     if hits:
         st.dataframe(
@@ -275,7 +321,7 @@ def _render_external_sources() -> list[dict]:
         if use_es:
             hosts = st.text_input(
                 "Elasticsearch 地址",
-                "http://localhost:9200",
+                DEFAULT_ELASTICSEARCH_URL,
                 key="troubleshooting_es_hosts",
             )
             index = st.text_input(
@@ -292,23 +338,24 @@ def _render_external_sources() -> list[dict]:
                 type="password",
                 key="troubleshooting_es_password",
             )
+            api_key = st.text_input(
+                "ES API Key（可选）",
+                type="password",
+                key="troubleshooting_es_api_key",
+            )
             keyword = st.text_input(
                 "ES 关键词（可选）",
                 key="troubleshooting_es_keyword",
             )
 
             if hosts and index:
-                config = {
-                    "hosts": [
-                        item.strip()
-                        for item in hosts.split(",")
-                        if item.strip()
-                    ],
-                    "index": index,
-                }
-                if username and password:
-                    config["username"] = username
-                    config["password"] = password
+                config = build_connector_configs(
+                    elasticsearch_urls=hosts,
+                    elasticsearch_index=index,
+                    elasticsearch_username=username,
+                    elasticsearch_password=password,
+                    elasticsearch_api_key=api_key,
+                )["elasticsearch"]
 
                 query = {"index": index, "size": 100}
                 if keyword:
@@ -329,7 +376,7 @@ def _render_external_sources() -> list[dict]:
         if use_prom:
             base_url = st.text_input(
                 "Prometheus 地址",
-                "http://localhost:9090",
+                DEFAULT_PROMETHEUS_URL,
                 key="troubleshooting_prom_url",
             )
             promql = st.text_input(
@@ -344,9 +391,10 @@ def _render_external_sources() -> list[dict]:
             )
 
             if base_url and promql:
-                config = {"base_url": base_url}
-                if token:
-                    config["bearer_token"] = token
+                config = build_connector_configs(
+                    prometheus_url=base_url,
+                    prometheus_bearer_token=token,
+                )["prometheus"]
 
                 sources.append({
                     "id": "prom_live",

@@ -111,6 +111,7 @@ class EvidenceService:
         include_related_feedback: bool = True,
         persist: bool = True,
         limit: int = 50,
+        link_mode: str = "replace",
     ) -> dict:
         """为一条反馈生成证据上下文。
 
@@ -119,7 +120,13 @@ class EvidenceService:
         - matches：按分数排序的关联证据
         - facts：由标识一致直接得出的事实
         - hypotheses：需要人工或日志内容进一步确认的假设
+
+        link_mode 默认保持原有 replace 语义；外部证据接入链路传 merge 时，
+        只增量更新当前关联，不删除此前已保存的历史关联。
         """
+
+        if link_mode not in ("replace", "merge"):
+            raise ValueError(f"不支持的关联写入模式：{link_mode}")
 
         record = self.feedback_repository.get_feedback_record(
             workspace_id, feedback_id
@@ -185,13 +192,22 @@ class EvidenceService:
                 if result.evidence.evidence_id
             ]
 
-            self.evidence_repository.replace_links(
-                workspace_id=workspace_id,
-                anchor_type="feedback",
-                anchor_id=feedback_id,
-                links=persisted_links,
-                relation=None,
-            )
+            if link_mode == "merge":
+                self.evidence_repository.merge_links(
+                    workspace_id=workspace_id,
+                    anchor_type="feedback",
+                    anchor_id=feedback_id,
+                    links=persisted_links,
+                    relation=None,
+                )
+            else:
+                self.evidence_repository.replace_links(
+                    workspace_id=workspace_id,
+                    anchor_type="feedback",
+                    anchor_id=feedback_id,
+                    links=persisted_links,
+                    relation=None,
+                )
 
         type_counts = Counter(
             result.evidence.evidence_type or "unknown"

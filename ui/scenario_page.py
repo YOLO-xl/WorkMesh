@@ -16,6 +16,11 @@ from services.fault_scenario_service import (
     match_scenario,
 )
 from services.connector_source_provider import ConnectorSourceProvider
+from services.connector_config import (
+    DEFAULT_ELASTICSEARCH_URL,
+    DEFAULT_PROMETHEUS_URL,
+    build_connector_configs,
+)
 from services.scenario_ops_service import ScenarioOpsService
 from ui.theme import hero, section
 
@@ -316,23 +321,25 @@ def render(db_path=None) -> None:
         )
         es_url = st.text_input(
             "Elasticsearch 地址",
-            value="http://localhost:9200",
+            value=DEFAULT_ELASTICSEARCH_URL,
             key="scenario_es_url",
             disabled=not use_connectors,
         )
         prom_url = st.text_input(
             "Prometheus 地址",
-            value="http://localhost:9091",
+            value=DEFAULT_PROMETHEUS_URL,
             key="scenario_prom_url",
             disabled=not use_connectors,
         )
 
     connector_provider = None
     if use_connectors:
-        connector_provider = ConnectorSourceProvider({
-            "elasticsearch": {"hosts": [es_url]},
-            "prometheus": {"base_url": prom_url},
-        })
+        connector_provider = ConnectorSourceProvider(
+            build_connector_configs(
+                elasticsearch_urls=es_url,
+                prometheus_url=prom_url,
+            )
+        )
 
     service = ScenarioOpsService(
         db_path=db_path,

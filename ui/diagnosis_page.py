@@ -8,6 +8,12 @@ from database.feedback_repository import FeedbackRepository
 from database.migration import initialize_database
 from database.report_repository import ReportRepository
 from services.diagnosis_service import DiagnosisService
+from services.connector_config import (
+    DEFAULT_ELASTICSEARCH_URL,
+    DEFAULT_PROMETHEUS_URL,
+    build_connector_configs,
+)
+from services.connector_source_provider import ConnectorSourceProvider
 from services.evidence_service import EvidenceService
 from ui.theme import hero, section
 
@@ -29,9 +35,39 @@ def render(db_path=None) -> None:
     feedback_repository = FeedbackRepository(db_path)
     workspace_id = feedback_repository.get_default_workspace()
 
+    with st.expander("外部连接器（可选）"):
+        use_connectors = st.checkbox(
+            "诊断时连接真实 Elasticsearch 与 Prometheus",
+            value=False,
+            key="diagnosis_use_connectors",
+            help="不勾选时只使用本地反馈与已入库证据；勾选后按命中场景的 connector 数据源查询外部服务。",
+        )
+        es_url = st.text_input(
+            "Elasticsearch 地址",
+            value=DEFAULT_ELASTICSEARCH_URL,
+            key="diagnosis_es_url",
+            disabled=not use_connectors,
+        )
+        prom_url = st.text_input(
+            "Prometheus 地址",
+            value=DEFAULT_PROMETHEUS_URL,
+            key="diagnosis_prom_url",
+            disabled=not use_connectors,
+        )
+
+    connector_provider = None
+    if use_connectors:
+        connector_provider = ConnectorSourceProvider(
+            build_connector_configs(
+                elasticsearch_urls=es_url,
+                prometheus_url=prom_url,
+            )
+        )
+
     service = DiagnosisService(
         evidence_service=EvidenceService(db_path=db_path),
         db_path=db_path,
+        connector_provider=connector_provider,
     )
 
     records = feedback_repository.list_feedback(
@@ -248,6 +284,13 @@ def _render_scenario(scenario: dict) -> None:
             + "、".join(item.get("id") or "" for item in missing)
             + "。相关步骤未验证，结论已降级。"
         )
+        reasons = "；".join(
+            f"{item.get('id') or ''}：{item.get('reason')}"
+            for item in missing
+            if item.get("reason")
+        )
+        if reasons:
+            st.caption("缺失原因：" + reasons)
 
     limits = scenario.get("limits") or []
     if limits:

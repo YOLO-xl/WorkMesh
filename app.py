@@ -8,6 +8,7 @@ from services.data_import_service import (
     read_uploaded_file,
     detect_field_mapping,
     build_standard_dataframe,
+    build_import_records,
     validate_dataframe,
     FIELD_ALIASES,
     REQUIRED_FIELDS,
@@ -33,38 +34,6 @@ initialize_database()
 feedback_repository = FeedbackRepository()
 evidence_repository = EvidenceRepository()
 
-
-def build_import_records(raw_df, standard_df, mapping):
-    """将标准化数据转换为 Repository 可写入的记录。"""
-    records = []
-
-    mapped_columns = {
-        column for column in mapping.values()
-        if column is not None
-    }
-
-    for position in range(len(standard_df)):
-        standard_row = standard_df.iloc[position]
-        raw_row = raw_df.iloc[position]
-
-        record = standard_row.to_dict()
-
-        # 反馈来源属于反馈记录字段，不是文件连接器类型。
-        record["source_type"] = record.get("source")
-
-        # 保留原始行，便于后续追溯。
-        record["raw_payload"] = raw_row.to_dict()
-
-        # 保留未映射的原始字段。
-        record["extra_data"] = {
-            str(column): raw_row[column]
-            for column in raw_df.columns
-            if column not in mapped_columns
-        }
-
-        records.append(record)
-
-    return records
 
 st.set_page_config(
     page_title="WorkMesh | Enterprise AI Workspace",
@@ -409,31 +378,62 @@ if page == "数据接入":
                                     valid_raw_df,
                                     valid_standard_df,
                                     mapping_data,
+                                    row_numbers=[
+                                        position + 1
+                                        for position in valid_positions
+                                    ],
                                 )
 
-                                batch_id = (
-                                    feedback_repository.create_import_batch(
-                                        workspace_id=workspace_id,
-                                        source_id=source_id,
-                                        file_name=st.session_state["import_filename"],
-                                        file_size=len(uploaded_file.getvalue()),
-                                        file_hash=file_hash,
-                                        total_records=len(records),
+                                # 部分失败后重试时，跳过已经成功写入的记录，
+                                # 避免重复插入，同时保留失败行继续写入。
+                                records, previously_imported = (
+                                    feedback_repository.filter_new_feedback_records(
+                                        source_id,
+                                        records,
                                     )
                                 )
 
-                                result = (
-                                    feedback_repository.bulk_insert_feedback(
-                                        batch_id=batch_id,
-                                        records=records,
+                                if not records:
+                                    result = {
+                                        "batch_id": None,
+                                        "total_records": 0,
+                                        "success_records": 0,
+                                        "failed_records": 0,
+                                        "status": "nothing_to_import",
+                                        "errors": [],
+                                        "skipped_records": len(invalid_positions),
+                                        "original_total_records": len(standard_df),
+                                        "previously_imported_records": previously_imported,
+                                        "file_hash": file_hash,
+                                    }
+                                    st.session_state["last_import_result"] = result
+                                else:
+                                    batch_id = (
+                                        feedback_repository.create_import_batch(
+                                            workspace_id=workspace_id,
+                                            source_id=source_id,
+                                            file_name=st.session_state["import_filename"],
+                                            file_size=len(uploaded_file.getvalue()),
+                                            file_hash=file_hash,
+                                            total_records=len(records),
+                                        )
                                     )
-                                )
 
-                                result["skipped_records"] = len(invalid_positions)
-                                result["original_total_records"] = len(standard_df)
-                                result["file_hash"] = file_hash
+                                    result = (
+                                        feedback_repository.bulk_insert_feedback(
+                                            batch_id=batch_id,
+                                            records=records,
+                                        )
+                                    )
 
-                                st.session_state["last_import_result"] = result
+                                    result["skipped_records"] = len(invalid_positions)
+                                    result["original_total_records"] = len(standard_df)
+                                    result["previously_imported_records"] = (
+                                        previously_imported
+                                    )
+                                    result["file_hash"] = file_hash
+
+                                    st.session_state["last_import_result"] = result
 
                         except Exception as exc:
                             st.error(f"数据库导入失败：{exc}")
@@ -465,9 +465,20 @@ if page == "数据接入":
                         )
 
                         st.caption(
-                            f"批次 ID：{result['batch_id']} | "
-                            f"状态：{result['status']}"
+                            (
+                                f"批次 ID：{result['batch_id']} | "
+                                f"状态：{result['status']}"
+                            )
+                            if result.get("batch_id")
+                            else "本次没有新增记录，未创建新批次。"
                         )
+
+                        if result.get("previously_imported_records"):
+                            st.info(
+                                "其中 "
+                                f"{result['previously_imported_records']} 条"
+                                "重复记录已跳过，不会重复写入。"
+                            )
 
                         if result["errors"]:
                             st.warning("部分记录写入失败：")
@@ -475,10 +486,15 @@ if page == "数据接入":
                                 pd.DataFrame(result["errors"]),
                                 use_container_width=True,
                             )
-                        elif result["skipped_records"] > 0:
-                            st.success("有效记录已写入，异常记录已跳过。")
+                        elif result["success_records"] > 0:
+                            if result["skipped_records"] > 0:
+                                st.success("有效记录已写入，异常记录已跳过。")
+                            else:
+                                st.success("本批数据已全部成功写入 SQLite。")
+                        elif result.get("previously_imported_records"):
+                            st.info("没有需要新增的记录。")
                         else:
-                            st.success("本批数据已全部成功写入 SQLite。")
+                            st.warning("本次没有可写入的记录。")
 
         except Exception as exc:
             st.error(f"文件处理失败：{exc}")

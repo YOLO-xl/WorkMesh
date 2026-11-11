@@ -171,6 +171,7 @@ class EvidenceRepository:
             )
 
             if existing_id:
+                evidence.evidence_id = existing_id
                 if own_connection:
                     conn.commit()
                 return {"evidence_id": existing_id, "inserted": False}
@@ -251,6 +252,7 @@ class EvidenceRepository:
         inserted = 0
         skipped = 0
         errors = []
+        records = []
 
         try:
             for index, evidence in enumerate(evidences):
@@ -265,6 +267,16 @@ class EvidenceRepository:
                         inserted += 1
                     else:
                         skipped += 1
+
+                    # 兼容旧调用方：保留计数，同时按输入顺序返回每条证据的 ID，
+                    # 供查询层把内存 hit 映射回统一证据记录。
+                    evidence.evidence_id = result["evidence_id"]
+                    records.append({
+                        "index": index,
+                        "record_id": evidence.record_id,
+                        "evidence_id": result["evidence_id"],
+                        "inserted": bool(result["inserted"]),
+                    })
                 except (
                     sqlite3.IntegrityError,
                     ValueError,
@@ -272,6 +284,13 @@ class EvidenceRepository:
                 ) as exc:
                     errors.append({
                         "row": index + 1,
+                        "error": str(exc),
+                    })
+                    records.append({
+                        "index": index,
+                        "record_id": evidence.record_id,
+                        "evidence_id": None,
+                        "inserted": False,
                         "error": str(exc),
                     })
 
@@ -290,6 +309,7 @@ class EvidenceRepository:
             "skipped": skipped,
             "failed": len(errors),
             "errors": errors,
+            "records": records,
         }
 
     # ------------------------------------------------------------------
@@ -628,6 +648,92 @@ class EvidenceRepository:
                         created_at, updated_at
                     )
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        generate_id(),
+                        workspace_id,
+                        anchor_type,
+                        anchor_id,
+                        evidence_id,
+                        link_relation,
+                        float(link.get("score", 0)),
+                        link.get("strength", "weak"),
+                        json_dumps(link.get("matched_keys", [])),
+                        json_dumps(link.get("reasons", [])),
+                        now,
+                        now,
+                    ),
+                )
+                written += 1
+
+            conn.commit()
+
+            return written
+
+        except Exception:
+            conn.rollback()
+            raise
+
+        finally:
+            conn.close()
+
+    def merge_links(
+        self,
+        workspace_id: str,
+        anchor_type: str,
+        anchor_id: str,
+        links: Iterable[dict],
+        relation: Optional[str] = "correlates",
+    ) -> int:
+        """增量写入证据关联，不删除该锚点已有的历史关联。
+
+        与 replace_links 的区别：
+        - 已存在的同 (evidence_id, relation) 关联只更新分数、强度与理由；
+        - 未出现在本次结果中的历史关联保留，避免重复诊断静默覆盖历史。
+        """
+
+        if anchor_type not in ANCHOR_TYPES:
+            raise ValueError(f"不支持的锚点类型：{anchor_type}")
+
+        if relation is not None and relation not in RELATIONS:
+            raise ValueError(f"不支持的关联类型：{relation}")
+
+        links = list(links)
+        conn = self._connect()
+
+        try:
+            now = utc_now()
+            written = 0
+
+            for link in links:
+                evidence_id = link.get("evidence_id")
+                if not evidence_id:
+                    continue
+
+                link_relation = link.get("relation") or relation or "correlates"
+                if link_relation not in RELATIONS:
+                    raise ValueError(f"不支持的关联类型：{link_relation}")
+
+                conn.execute(
+                    """
+                    INSERT INTO evidence_links
+                    (
+                        id, workspace_id, anchor_type, anchor_id,
+                        evidence_id, relation, score, strength,
+                        matched_keys_json, reasons_json,
+                        created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (
+                        workspace_id, anchor_type, anchor_id,
+                        evidence_id, relation
+                    )
+                    DO UPDATE SET
+                        score = excluded.score,
+                        strength = excluded.strength,
+                        matched_keys_json = excluded.matched_keys_json,
+                        reasons_json = excluded.reasons_json,
+                        updated_at = excluded.updated_at
                     """,
                     (
                         generate_id(),

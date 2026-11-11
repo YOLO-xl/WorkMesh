@@ -53,11 +53,17 @@ class DiagnosisService:
         llm_client: Optional[Callable[[str], str]] = None,
         db_path=None,
         scenario_registry: Optional[FaultScenarioRegistry] = None,
+        connector_provider: Optional[
+            Callable[[dict, dict], list[dict]]
+        ] = None,
+        link_mode: str = "replace",
     ):
         self.evidence_service = evidence_service or EvidenceService(db_path=db_path)
         self._llm_client = llm_client
         self.scenario_registry = scenario_registry
         self._scenario_registry_loaded = scenario_registry is not None
+        self.connector_provider = connector_provider
+        self.link_mode = link_mode
 
     def _get_scenario_registry(self) -> FaultScenarioRegistry:
         if not self._scenario_registry_loaded:
@@ -123,12 +129,22 @@ class DiagnosisService:
         min_score: float = 30.0,
         use_llm: bool = False,
         manual_answers: Optional[dict[str, Any]] = None,
+        connector_provider: Optional[
+            Callable[[dict, dict], list[dict]]
+        ] = None,
     ) -> dict:
+        """构建诊断结果。
+
+        connector_provider 是本次调用的可选 Provider；传入时优先于实例
+        默认 Provider，用于故障排查把本轮外部查询结果接入场景数据源。
+        """
+
         context = self.evidence_service.build_context(
             workspace_id=workspace_id,
             feedback_id=feedback_id,
             window_minutes=window_minutes,
             min_score=min_score,
+            link_mode=self.link_mode,
         )
 
         refs = _collect_refs(context)
@@ -140,6 +156,7 @@ class DiagnosisService:
             workspace_id=workspace_id,
             context=context,
             manual_answers=manual_answers or {},
+            connector_provider=connector_provider,
         )
         result["scenario"] = scenario_run
 
@@ -175,6 +192,9 @@ class DiagnosisService:
         workspace_id: str,
         context: dict,
         manual_answers: dict[str, Any],
+        connector_provider: Optional[
+            Callable[[dict, dict], list[dict]]
+        ] = None,
     ) -> Optional[dict]:
         """匹配并执行故障场景；配置不可用时返回 None，不影响规则诊断。"""
 
@@ -192,10 +212,17 @@ class DiagnosisService:
         if not scenario:
             return None
 
+        effective_provider = (
+            connector_provider
+            if connector_provider is not None
+            else self.connector_provider
+        )
+
         runner = ScenarioRunner(
             feedback_repository=self.evidence_service.feedback_repository,
             evidence_repository=self.evidence_service.evidence_repository,
             manual_answers=manual_answers,
+            connector_provider=effective_provider,
         )
         run = runner.run(
             workspace_id=workspace_id,

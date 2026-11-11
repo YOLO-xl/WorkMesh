@@ -7,6 +7,7 @@
 import base64
 import hashlib
 import json
+import math
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -255,67 +256,167 @@ class PrometheusConnector(BaseConnector):
         self,
         records: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        normalized = []
+        """兼容原有调用方，只返回正常归一化结果。"""
 
-        for record in records:
-            metric = record.get("metric") or {}
-            query = record.get("query") or ""
-            labels = {
-                key: value
-                for key, value in metric.items()
-                if key != "__name__"
-            }
-
-            service = None
-            for key in SERVICE_LABEL_KEYS:
-                if metric.get(key):
-                    service = str(metric[key])
-                    break
-
-            name = metric.get("__name__") or "prometheus_metric"
-            value = record.get("value")
-            timestamp = record.get("timestamp")
-
-            label_text = ",".join(f"{k}={v}" for k, v in sorted(labels.items()))
-            message = f"{name} = {_format_value(value)}"
-            if label_text:
-                message = f"{message}（{label_text}）"
-
-            record_id = (
-                f"prom:{_short_hash(query)}:{_short_hash(json.dumps(labels, sort_keys=True))}"
-                f":{int(timestamp) if timestamp else 0}"
-            )
-
-            normalized.append({
-                "evidence_type": "metric",
-                "connector_type": self.connector_type,
-                "record_id": record_id,
-                "timestamp": timestamp,
-                "service": service,
-                "error_code": metric.get("error_code") or metric.get("code"),
-                "message": message,
-                "title": name,
-                "attributes": {
-                    "metric_name": name,
-                    "metric_value": value,
-                    "labels": labels,
-                    "promql": query,
-                },
-                "raw_data": record,
-            })
-
+        normalized, _ = self.normalize_with_report(records)
         return normalized
+
+    def normalize_with_report(
+        self,
+        records: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """逐个处理指标数据点，返回正常结果和被跳过的异常点及原因。
+
+        单个异常点不会中断同一批次其他点的处理。
+        """
+
+        normalized: list[dict[str, Any]] = []
+        skipped: list[dict[str, Any]] = []
+
+        for index, record in enumerate(records):
+            try:
+                if not isinstance(record, dict):
+                    raise ValueError("指标记录必须是字典")
+
+                metric = record.get("metric") or {}
+                if not isinstance(metric, dict):
+                    raise ValueError("metric 字段必须是字典")
+
+                raw_value = record.get("value")
+                value, value_reason = _coerce_metric_value(raw_value)
+                if value_reason:
+                    skipped.append({
+                        "index": index,
+                        "reason": value_reason,
+                        "value": raw_value,
+                        "record": record,
+                    })
+                    continue
+
+                raw_timestamp = record.get("timestamp")
+                timestamp, timestamp_reason = _coerce_timestamp(
+                    raw_timestamp
+                )
+                if timestamp_reason:
+                    skipped.append({
+                        "index": index,
+                        "reason": timestamp_reason,
+                        "timestamp": raw_timestamp,
+                        "record": record,
+                    })
+                    continue
+
+                query = record.get("query") or ""
+                labels = {
+                    key: value
+                    for key, value in metric.items()
+                    if key != "__name__"
+                }
+
+                service = None
+                for key in SERVICE_LABEL_KEYS:
+                    if metric.get(key):
+                        service = str(metric[key])
+                        break
+
+                name = metric.get("__name__") or "prometheus_metric"
+
+                label_text = ",".join(
+                    f"{key}={value}"
+                    for key, value in sorted(labels.items())
+                )
+                message = f"{name} = {_format_value(value)}"
+                if label_text:
+                    message = f"{message}（{label_text}）"
+
+                record_id = (
+                    f"prom:{_short_hash(query)}:"
+                    f"{_short_hash(json.dumps(labels, sort_keys=True))}"
+                    f":{int(timestamp) if timestamp else 0}"
+                )
+
+                normalized.append({
+                    "evidence_type": "metric",
+                    "connector_type": self.connector_type,
+                    "record_id": record_id,
+                    "timestamp": timestamp,
+                    "service": service,
+                    "error_code": metric.get("error_code") or metric.get("code"),
+                    "message": message,
+                    "title": name,
+                    "attributes": {
+                        "metric_name": name,
+                        "metric_value": value,
+                        "labels": labels,
+                        "promql": query,
+                    },
+                    "raw_data": record,
+                })
+
+            except Exception as exc:
+                skipped.append({
+                    "index": index,
+                    "reason": f"记录处理失败：{exc}",
+                    "record": record,
+                })
+
+        return normalized, skipped
 
     def close(self) -> None:
         self._connected = False
 
 
+def _coerce_metric_value(value: Any) -> tuple[float | None, str | None]:
+    """把指标值转换为有限浮点数；None 表示无值，异常值返回跳过原因。"""
+
+    if value is None:
+        return None, None
+
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None, "无法解析为数值"
+
+    if math.isnan(number):
+        return None, "NaN"
+    if math.isinf(number):
+        return None, "+Inf" if number > 0 else "-Inf"
+
+    return number, None
+
+
+def _coerce_timestamp(value: Any) -> tuple[float | None, str | None]:
+    """校验时间戳；非有限时间戳不能用于生成稳定 record_id。"""
+
+    if value is None:
+        return None, None
+
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None, "无法解析时间戳"
+
+    if not math.isfinite(number):
+        return None, "时间戳非有限值"
+
+    return number, None
+
+
 def _format_value(value: float | None) -> str:
     if value is None:
-        return "NaN"
-    if value == int(value) and abs(value) < 1e15:
-        return str(int(value))
-    return f"{value:.4g}"
+        return "无值"
+
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return "无值"
+
+    if not math.isfinite(number):
+        return "无值"
+
+    if abs(number) < 1e15 and number == int(number):
+        return str(int(number))
+    return f"{number:.4g}"
 
 
 def _default_step(start: Any, end: Any) -> str:

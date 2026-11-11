@@ -104,16 +104,24 @@ def test_has_imported_file_checks_completed_and_partially_failed(tmp_path):
     # 尚未导入的文件应返回 False
     assert repo.has_imported_file(source_id, file_hash) is False
 
-    # 创建已完成的导入批次
+    # 创建已完成且成功写入一条记录的导入批次
     completed_batch = repo.create_import_batch(
         workspace_id=workspace_id,
         source_id=source_id,
         file_name="completed.csv",
         file_hash=file_hash,
-        total_records=0,
+        total_records=1,
     )
 
-    repo.bulk_insert_feedback(completed_batch, [])
+    repo.bulk_insert_feedback(
+        completed_batch,
+        [
+            {
+                "feedback_id": "COMPLETED-001",
+                "description": "已完成记录",
+            },
+        ],
+    )
 
     assert repo.has_imported_file(source_id, file_hash) is True
 
@@ -142,7 +150,20 @@ def test_has_imported_file_checks_completed_and_partially_failed(tmp_path):
         ],
     )
 
-    assert repo.has_imported_file(source_id, partial_hash) is True
+    # T01 语义调整：partial 批次不再视为完整导入，允许重试。
+    # 旧实现此处置为 True，导致 96/100 的批次无法补导失败的 4 行。
+    assert repo.has_imported_file(source_id, partial_hash) is False
+
+    # 重试时已成功的记录应被跳过，不重复插入。
+    records, previously_imported = repo.filter_new_feedback_records(
+        source_id,
+        [
+            {"feedback_id": "DUPLICATE-001", "description": "第一条记录"},
+            {"feedback_id": "NEW-001", "description": "此前失败的新记录"},
+        ],
+    )
+    assert previously_imported == 1
+    assert [record["feedback_id"] for record in records] == ["NEW-001"]
 
 
 def test_bulk_insert_marks_batch_failed_when_all_records_fail(tmp_path):

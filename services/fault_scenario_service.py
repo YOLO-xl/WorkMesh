@@ -703,6 +703,10 @@ class ScenarioRunner:
         else:
             status = "verified"
 
+        if status == "blocked":
+            # blocked 只输出缺失清单与补证动作，不输出方向性假设。
+            hypotheses = []
+
         confidence = self._confidence(scenario, hypotheses, status, anchor)
         limits = self._limits(scenario, status, missing_sources, anchor)
         next_actions = self._next_actions(
@@ -788,6 +792,13 @@ class ScenarioRunner:
                 }
 
             results[source_id].setdefault("description", description)
+
+            result = results[source_id]
+            if result.get("available") and not result.get("records"):
+                # 连接成功不等于证据可用：查询成功但 0 条有效记录，
+                # 与查询失败区分原因，并统一按不可用参与场景状态判断。
+                result["available"] = False
+                result["reason"] = "查询成功但无有效证据"
 
         return results
 
@@ -918,7 +929,7 @@ class ScenarioRunner:
                 "available": False,
                 "records": [],
                 "description": source.get("description") or source["id"],
-                "reason": "第一阶段未接入实时连接器",
+                "reason": "未配置连接器 Provider",
             }
 
         start, end = self._window(source, anchor)
@@ -928,6 +939,20 @@ class ScenarioRunner:
 
         try:
             records = self.connector_provider(resolved, feedback) or []
+        except ValueError as exc:
+            return {
+                "available": False,
+                "records": [],
+                "description": source.get("description") or source["id"],
+                "reason": f"连接器配置错误：{exc}",
+            }
+        except ConnectionError as exc:
+            return {
+                "available": False,
+                "records": [],
+                "description": source.get("description") or source["id"],
+                "reason": f"连接器连接失败：{exc}",
+            }
         except Exception as exc:
             return {
                 "available": False,
@@ -1011,7 +1036,10 @@ class ScenarioRunner:
 
         result = source_results[source_id]
         if not result.get("available"):
-            return None
+            # “查询成功但无有效证据”的源仍可给出 count=0 / exists=false；
+            # 查询失败或尚未接入的源不能伪造观测值。
+            if result.get("reason") != "查询成功但无有效证据":
+                return None
 
         records = result.get("records") or []
         field = signal.get("field")

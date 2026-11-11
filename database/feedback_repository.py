@@ -190,7 +190,12 @@ class FeedbackRepository:
         source_id: str,
         file_hash: str,
     ) -> bool:
-        """检查同一数据源是否已经导入过该文件。"""
+        """检查同一数据源是否已经完整导入过该文件。
+
+        只有 completed 且至少成功写入一条记录的批次才算“已导入”；
+        partially_failed / failed / 空 completed 批次允许重新导入，
+        重试时由 filter_new_feedback_records 跳过已成功记录。
+        """
         with self._connect() as conn:
             row = conn.execute(
                 """
@@ -198,13 +203,127 @@ class FeedbackRepository:
                 FROM import_batches
                 WHERE source_id = ?
                   AND file_hash = ?
-                  AND status IN ('completed', 'partially_failed')
+                  AND status = 'completed'
+                  AND success_records > 0
                 LIMIT 1
                 """,
                 (source_id, file_hash),
             ).fetchone()
 
         return row is not None
+
+    @staticmethod
+    def _external_id_value(record: dict) -> Optional[str]:
+        """读取用于去重的外部业务 ID，空值/NaN 视为没有 ID。"""
+
+        value = record.get("feedback_id")
+        if value is None or (
+            isinstance(value, str) and not value.strip()
+        ):
+            value = record.get("external_id")
+
+        value = normalize_value(value)
+        if value is None:
+            return None
+
+        text = str(value).strip()
+        return text or None
+
+    @staticmethod
+    def _fallback_key_values(record: dict) -> Optional[tuple]:
+        """没有外部 ID 时，用时间 + 描述 + 可选 uid 构造兜底判重键。
+
+        feedback_time 和 description 必须同时有效；uid 仅作为附加区分字段，
+        允许为空。缺少时间或描述时返回 None，不能只凭 uid 判重。
+        """
+
+        uid = normalize_value(record.get("uid"))
+        feedback_time = normalize_value(record.get("feedback_time"))
+        description = normalize_value(record.get("description"))
+
+        uid_text = "" if uid is None else str(uid).strip()
+        time_text = "" if feedback_time is None else str(feedback_time).strip()
+        description_text = (
+            "" if description is None else str(description).strip()
+        )
+
+        if not time_text or not description_text:
+            return None
+
+        return (uid_text, time_text, description_text)
+
+    def filter_new_feedback_records(
+        self,
+        source_id: str,
+        records: Iterable[dict],
+    ) -> tuple[list[dict], int]:
+        """过滤已经成功写入或本批次内重复的记录，返回 (待写入记录, 跳过条数)。
+
+        用于 partially_failed / failed 批次重试：已成功的记录不重复插入，
+        失败行仍按原始行号和新批次继续写入。
+
+        遍历过程中会把已接受记录的 external_id / 兜底业务键加入判重集合，
+        因此同一批数据内部的重复也能被识别。
+        """
+
+        records = list(records)
+        if not records:
+            return [], 0
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT external_id, uid, feedback_time, description
+                FROM feedback_records
+                WHERE source_id = ?
+                  AND deleted_at IS NULL
+                """,
+                (source_id,),
+            ).fetchall()
+
+        existing_external = {
+            str(row["external_id"]).strip()
+            for row in rows
+            if row["external_id"] is not None
+            and str(row["external_id"]).strip()
+        }
+        existing_fallback = set()
+        for row in rows:
+            key = self._fallback_key_values(dict(row))
+            if key is not None:
+                existing_fallback.add(key)
+
+        seen_external = set(existing_external)
+        seen_fallback = set(existing_fallback)
+
+        new_records = []
+        previously_imported = 0
+
+        for record in records:
+            external_id = self._external_id_value(record)
+            fallback_key = self._fallback_key_values(record)
+
+            duplicate = False
+
+            if external_id is not None:
+                # 有外部 ID 时保持 ID 优先判重；兜底键只作为后续无 ID 记录的线索。
+                if external_id in seen_external:
+                    duplicate = True
+            elif fallback_key is not None and fallback_key in seen_fallback:
+                duplicate = True
+
+            if duplicate:
+                previously_imported += 1
+                continue
+
+            if external_id is not None:
+                seen_external.add(external_id)
+            if fallback_key is not None:
+                seen_fallback.add(fallback_key)
+
+            new_records.append(record)
+
+        return new_records, previously_imported
 
     def bulk_insert_feedback(
         self,
@@ -245,18 +364,32 @@ class FeedbackRepository:
             errors = []
 
             for index, record in enumerate(records):
+                external_id = None
+                normalized = {}
+                raw_payload = None
+                source_row = index + 1
+
+                if isinstance(record, dict):
+                    import_row = record.get("_import_row")
+                    if isinstance(import_row, int) and import_row > 0:
+                        source_row = import_row
+
                 try:
-                    external_id = normalize_value(
-                        record.get("feedback_id")
-                        or record.get("external_id")
-                    )
+                    if not isinstance(record, dict):
+                        raise TypeError("反馈记录必须是字典")
+
+                    external_id = self._external_id_value(record)
 
                     feedback_time = normalize_value(
                         record.get("feedback_time")
                     )
 
-                    raw_payload = record.get("raw_payload") or {}
-                    extra_data = record.get("extra_data") or {}
+                    raw_payload = normalize_value(
+                        record.get("raw_payload") or {}
+                    )
+                    extra_data = normalize_value(
+                        record.get("extra_data") or {}
+                    )
 
                     normalized = {
                         "uid": normalize_value(record.get("uid")),
@@ -335,12 +468,21 @@ class FeedbackRepository:
                     ValueError,
                     TypeError,
                     OverflowError,
+                    AttributeError,
                 ) as exc:
                     failed_count += 1
-                    errors.append({
-                        "row": index + 1,
+                    error = {
+                        "row": source_row,
                         "error": str(exc),
-                    })
+                    }
+                    if external_id is not None:
+                        error["feedback_id"] = external_id
+                    if normalized:
+                        error["uid"] = normalized.get("uid")
+                        error["description"] = normalized.get("description")
+                    if raw_payload is not None:
+                        error["raw_payload"] = raw_payload
+                    errors.append(error)
 
             completed_at = utc_now()
 
@@ -573,6 +715,16 @@ class FeedbackRepository:
                 )
 
             return result
+
+    def get_batch_errors(self, batch_id: str) -> list[dict]:
+        """读取批次失败行，供后续补导 / 前端展示使用。"""
+
+        batch = self.get_batch_statistics(batch_id)
+        if batch is None:
+            return []
+
+        errors = batch.get("error_summary") or []
+        return errors if isinstance(errors, list) else []
 
     def get_feedback_analytics(self, workspace_id: str) -> dict:
         """获取工作空间的反馈分析统计数据。"""

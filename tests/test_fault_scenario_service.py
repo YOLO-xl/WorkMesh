@@ -495,3 +495,210 @@ def test_refund_runner_uses_connector_provider_and_produces_hypotheses():
         "refund_surface_backlog",
     }
     assert all(item["evidence_refs"] for item in run["hypotheses"])
+
+
+def _source_scenario(sources, primary_source):
+    return _scenario(
+        sources=sources,
+        signals=[
+            {
+                "id": "source_count",
+                "source": primary_source,
+                "kind": "count",
+            }
+        ],
+        steps=[
+            {
+                "id": "check_source",
+                "title": "检查数据源",
+                "uses": [primary_source],
+                "observe": "source_count",
+                "criteria": {
+                    "pass": {"signal": "source_count", "op": "gte", "value": 1},
+                    "fail": {"signal": "source_count", "op": "eq", "value": 0},
+                },
+                "on_missing": "block",
+            }
+        ],
+        rules=[],
+    )
+
+
+def _required_evidence_source():
+    return {
+        "id": "required_logs",
+        "kind": "evidence",
+        "required": True,
+        "window_minutes": 30,
+        "query": {},
+    }
+
+
+def _optional_connector_source():
+    return {
+        "id": "optional_metrics",
+        "kind": "connector",
+        "connector_type": "prometheus",
+        "required": False,
+        "window_minutes": 30,
+        "query": {},
+    }
+
+
+def _log_evidence():
+    return Evidence(
+        evidence_type="log",
+        record_id="log-required-1",
+        timestamp="2026-11-01T09:15:00Z",
+        service="账号服务",
+        message="required evidence",
+        evidence_id="ev-required-1",
+    )
+
+
+def test_required_source_empty_result_blocks_and_marks_unavailable():
+    scenario = _source_scenario(
+        [_required_evidence_source()], "required_logs"
+    )
+    feedback = _login_feedback()
+
+    run = ScenarioRunner(
+        feedback_repository=FakeFeedbackRepository([feedback]),
+        evidence_repository=FakeEvidenceRepository([]),
+    ).run("workspace", feedback, scenario)
+
+    assert run["status"] == "blocked"
+    assert run["sources"]["required_logs"]["available"] is False
+    assert run["sources"]["required_logs"]["count"] == 0
+    assert run["sources"]["required_logs"]["reason"] == "查询成功但无有效证据"
+    assert "required_logs" in [
+        item["id"] for item in run["missing_sources"]
+    ]
+    assert run["hypotheses"] == []
+
+
+def test_required_source_query_failure_blocks_with_different_reason():
+    source = {
+        "id": "required_logs",
+        "kind": "connector",
+        "connector_type": "elasticsearch",
+        "required": True,
+        "window_minutes": 30,
+        "query": {},
+    }
+    scenario = _source_scenario([source], "required_logs")
+    feedback = _login_feedback()
+
+    def provider(source, record):
+        raise RuntimeError("upstream unavailable")
+
+    run = ScenarioRunner(
+        feedback_repository=FakeFeedbackRepository([feedback]),
+        evidence_repository=FakeEvidenceRepository(),
+        connector_provider=provider,
+    ).run("workspace", feedback, scenario)
+
+    assert run["status"] == "blocked"
+    assert run["sources"]["required_logs"]["available"] is False
+    assert "连接器查询失败" in run["sources"]["required_logs"]["reason"]
+    assert "required_logs" in [
+        item["id"] for item in run["missing_sources"]
+    ]
+
+
+def test_optional_source_empty_does_not_block():
+    sources = [
+        {
+            "id": "feedback_recent",
+            "kind": "feedback",
+            "required": True,
+            "window_minutes": 30,
+            "query": {},
+        },
+        _optional_connector_source(),
+    ]
+    scenario = _source_scenario(sources, "feedback_recent")
+    feedback = _login_feedback()
+
+    run = ScenarioRunner(
+        feedback_repository=FakeFeedbackRepository([feedback]),
+        evidence_repository=FakeEvidenceRepository(),
+        connector_provider=lambda source, record: [],
+    ).run("workspace", feedback, scenario)
+
+    assert run["status"] == "partial"
+    assert run["sources"]["feedback_recent"]["available"] is True
+    assert run["sources"]["optional_metrics"]["available"] is False
+    assert run["sources"]["optional_metrics"]["reason"] == "查询成功但无有效证据"
+    assert "feedback_recent" not in [
+        item["id"] for item in run["missing_sources"]
+    ]
+    assert "optional_metrics" in [
+        item["id"] for item in run["missing_sources"]
+    ]
+
+
+def test_required_empty_with_optional_result_still_blocks():
+    sources = [
+        _required_evidence_source(),
+        _optional_connector_source(),
+    ]
+    scenario = _source_scenario(sources, "required_logs")
+    feedback = _login_feedback()
+
+    run = ScenarioRunner(
+        feedback_repository=FakeFeedbackRepository([feedback]),
+        evidence_repository=FakeEvidenceRepository([]),
+        connector_provider=lambda source, record: [{"value": 1}],
+    ).run("workspace", feedback, scenario)
+
+    assert run["status"] == "blocked"
+    assert run["sources"]["required_logs"]["available"] is False
+    assert run["sources"]["optional_metrics"]["available"] is True
+    assert [item["id"] for item in run["missing_sources"]] == [
+        "required_logs"
+    ]
+
+
+def test_multiple_required_one_empty_blocks():
+    sources = [
+        {
+            "id": "feedback_recent",
+            "kind": "feedback",
+            "required": True,
+            "window_minutes": 30,
+            "query": {},
+        },
+        _required_evidence_source(),
+    ]
+    scenario = _source_scenario(sources, "feedback_recent")
+    feedback = _login_feedback()
+
+    run = ScenarioRunner(
+        feedback_repository=FakeFeedbackRepository([feedback]),
+        evidence_repository=FakeEvidenceRepository([]),
+    ).run("workspace", feedback, scenario)
+
+    assert run["status"] == "blocked"
+    assert run["sources"]["feedback_recent"]["available"] is True
+    assert run["sources"]["required_logs"]["available"] is False
+    assert [item["id"] for item in run["missing_sources"]] == [
+        "required_logs"
+    ]
+    assert run["hypotheses"] == []
+
+
+def test_all_required_sources_with_results_is_verified():
+    scenario = _source_scenario(
+        [_required_evidence_source()], "required_logs"
+    )
+    feedback = _login_feedback()
+
+    run = ScenarioRunner(
+        feedback_repository=FakeFeedbackRepository([feedback]),
+        evidence_repository=FakeEvidenceRepository([_log_evidence()]),
+    ).run("workspace", feedback, scenario)
+
+    assert run["status"] == "verified"
+    assert run["sources"]["required_logs"]["available"] is True
+    assert run["missing_sources"] == []

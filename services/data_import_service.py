@@ -1,6 +1,8 @@
 import pandas as pd
 from io import BytesIO
 
+from database.utils import normalize_value
+
 # WorkMesh 统一反馈字段
 FIELD_ALIASES = {
     "feedback_id": ["feedback_id", "反馈ID", "工单ID", "ticket_id", "id"],
@@ -17,6 +19,56 @@ FIELD_ALIASES = {
 }
 
 REQUIRED_FIELDS = ["feedback_time", "source", "description"]
+
+
+def build_import_records(raw_df, standard_df, mapping, row_numbers=None):
+    """将标准化数据转换为 Repository 可写入的记录。
+
+    raw_df / standard_df 中的 NaN、NaT、Inf、numpy 标量会在构造时递归归一化，
+    避免进入 raw_payload / extra_data 后触发 allow_nan=False 的 JSON 异常。
+
+    row_numbers 可选，用于保留记录在原始文件中的行号（1-based）；
+    传入时长度必须与 standard_df 一致。
+    """
+
+    if row_numbers is not None and len(row_numbers) != len(standard_df):
+        raise ValueError("row_numbers 长度必须与标准数据行数一致")
+
+    records = []
+
+    mapped_columns = {
+        column for column in mapping.values()
+        if column is not None
+    }
+
+    for position in range(len(standard_df)):
+        standard_row = standard_df.iloc[position]
+        raw_row = raw_df.iloc[position]
+
+        record = {
+            key: normalize_value(value)
+            for key, value in standard_row.to_dict().items()
+        }
+
+        # 反馈来源属于反馈记录字段，不是文件连接器类型。
+        record["source_type"] = record.get("source")
+
+        # 保留原始行，便于后续追溯；NaN/NaT/Inf 统一转为 None。
+        record["raw_payload"] = normalize_value(raw_row.to_dict())
+
+        # 保留未映射的原始字段。
+        record["extra_data"] = normalize_value({
+            str(column): raw_row[column]
+            for column in raw_df.columns
+            if column not in mapped_columns
+        })
+
+        if row_numbers is not None:
+            record["_import_row"] = int(row_numbers[position])
+
+        records.append(record)
+
+    return records
 
 
 def read_uploaded_file(uploaded_file):

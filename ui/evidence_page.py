@@ -19,6 +19,11 @@ from core.correlation import DEFAULT_MIN_SCORE, DEFAULT_WINDOW_MINUTES
 from database.evidence_repository import EvidenceRepository
 from database.feedback_repository import FeedbackRepository
 from database.migration import initialize_database
+from services.connector_config import (
+    DEFAULT_ELASTICSEARCH_URL,
+    DEFAULT_PROMETHEUS_URL,
+    build_connector_configs,
+)
 from services.evidence_service import TYPE_LABELS, EvidenceService
 from ui.theme import hero
 
@@ -237,11 +242,12 @@ def _render_ingest(service: EvidenceService, workspace_id: str) -> None:
 
         with st.form("es_evidence_form"):
             hosts = st.text_input(
-                "Elasticsearch 地址", "http://localhost:9200"
+                "Elasticsearch 地址", DEFAULT_ELASTICSEARCH_URL
             )
             index = st.text_input("索引", "app-logs")
             username = st.text_input("用户名（可选）")
             password = st.text_input("密码（可选）", type="password")
+            api_key = st.text_input("API Key（可选）", type="password")
 
             uid = st.text_input("UID（可选）")
             error_code = st.text_input("错误码（可选）")
@@ -250,18 +256,13 @@ def _render_ingest(service: EvidenceService, workspace_id: str) -> None:
             submitted = st.form_submit_button("测试连接并查询")
 
         if submitted:
-            config = {
-                "hosts": [
-                    item.strip()
-                    for item in hosts.split(",")
-                    if item.strip()
-                ],
-                "index": index,
-            }
-
-            if username and password:
-                config["username"] = username
-                config["password"] = password
+            config = build_connector_configs(
+                elasticsearch_urls=hosts,
+                elasticsearch_index=index,
+                elasticsearch_username=username,
+                elasticsearch_password=password,
+                elasticsearch_api_key=api_key,
+            )["elasticsearch"]
 
             try:
                 connector = connector_registry.create(
@@ -309,7 +310,7 @@ def _render_ingest(service: EvidenceService, workspace_id: str) -> None:
 
         with st.form("prometheus_form"):
             base_url = st.text_input(
-                "Prometheus 地址", "http://localhost:9090"
+                "Prometheus 地址", DEFAULT_PROMETHEUS_URL
             )
             promql = st.text_input(
                 "PromQL",
@@ -328,13 +329,12 @@ def _render_ingest(service: EvidenceService, workspace_id: str) -> None:
             )
 
         if test_submitted or query_submitted:
-            config = {"base_url": base_url}
-
-            if bearer_token:
-                config["bearer_token"] = bearer_token
-            elif username:
-                config["username"] = username
-                config["password"] = password
+            config = build_connector_configs(
+                prometheus_url=base_url,
+                prometheus_bearer_token=bearer_token,
+                prometheus_username=username,
+                prometheus_password=password,
+            )["prometheus"]
 
             try:
                 connector = connector_registry.create(
@@ -357,7 +357,13 @@ def _render_ingest(service: EvidenceService, workspace_id: str) -> None:
                                 "查询没有返回数据，请检查 PromQL 或时间范围。"
                             )
                         else:
-                            normalized = connector.normalize(points)
+                            normalized, skipped = (
+                                connector.normalize_with_report(points)
+                            )
+                            _render_prometheus_normalize_report(
+                                len(normalized),
+                                skipped,
+                            )
                             result = service.ingest_connector_records(
                                 workspace_id,
                                 normalized,
@@ -397,7 +403,11 @@ def _render_ingest(service: EvidenceService, workspace_id: str) -> None:
                         {"base_url": "http://demo"}
                     )
                     points = connector.parse_response(payload)
-                    normalized = connector.normalize(points)
+                    normalized, skipped = connector.normalize_with_report(points)
+                    _render_prometheus_normalize_report(
+                        len(normalized),
+                        skipped,
+                    )
                     result = service.ingest_connector_records(
                         workspace_id,
                         normalized,
@@ -412,6 +422,40 @@ def _render_ingest(service: EvidenceService, workspace_id: str) -> None:
                     )
                 except (PrometheusError, ValueError) as exc:
                     st.error(f"内置样例接入失败：{exc}")
+
+
+def _render_prometheus_normalize_report(
+    success_count: int,
+    skipped: list[dict],
+) -> None:
+    """展示指标归一化的成功/跳过数量，并允许查看跳过原因。"""
+
+    st.info(
+        f"指标归一化：成功处理 {success_count} 个点位，"
+        f"跳过 {len(skipped)} 个点位。"
+    )
+
+    if not skipped:
+        return
+
+    rows = []
+    for item in skipped:
+        record = item.get("record")
+        metric = record.get("metric") if isinstance(record, dict) else {}
+        metric = metric if isinstance(metric, dict) else {}
+        rows.append({
+            "序号": item.get("index", 0) + 1,
+            "指标": metric.get("__name__") or "—",
+            "原始值": record.get("value") if isinstance(record, dict) else "—",
+            "跳过原因": item.get("reason") or "未知原因",
+        })
+
+    with st.expander("查看被跳过的数据点及原因"):
+        st.dataframe(
+            pd.DataFrame(rows),
+            use_container_width=True,
+            hide_index=True,
+        )
 
 
 def _read_sample_prometheus(
